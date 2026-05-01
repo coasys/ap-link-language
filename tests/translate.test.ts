@@ -1,0 +1,558 @@
+/**
+ * Unit tests for the link ↔ activity translation layer.
+ *
+ * Tests the pure translation functions without requiring ad4m:host
+ * runtime imports — all dependencies are injected or mocked via
+ * simple function signatures.
+ */
+
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+    linkToActivity,
+    removalToActivity,
+    diffToActivities,
+    activityToLink,
+    deleteActivityToRemoval,
+    likeActivityToLink,
+    announceActivityToLink,
+    inboundActivityToLink,
+    linkContentKey,
+    toISO,
+} from "../src/translate.js";
+
+import type { LinkExpression, PerspectiveDiff } from "../src/types.js";
+import type { APActivity, APObject, APLinkTag } from "../src/activitypub.js";
+import { DEFAULT_SETTINGS } from "../src/settings.js";
+import type { APLanguageSettings } from "../src/settings.js";
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const GROUP_ACTOR_URL = "https://example.com/ap/v1/groups/test-group";
+const ACTOR_URL = "https://example.com/ap/v1/users/alice";
+
+function makeLinkExpression(overrides?: Partial<LinkExpression>): LinkExpression {
+    return {
+        author: "did:key:z6MkTest",
+        timestamp: "2026-05-02T00:00:00.000Z",
+        data: {
+            source: "literal://hello",
+            target: "literal://world",
+            predicate: "sioc://content_of",
+        },
+        proof: {
+            signature: "abc123",
+            key: "key123",
+        },
+        ...overrides,
+    };
+}
+
+function makeChatLink(): LinkExpression {
+    return makeLinkExpression({
+        data: {
+            source: "channel://main",
+            target: "expr://msg-001",
+            predicate: "flux://has_message",
+        },
+    });
+}
+
+function simpleHash(data: string): string {
+    let h = 0;
+    for (let i = 0; i < data.length; i++) {
+        h = ((h << 5) - h + data.charCodeAt(i)) | 0;
+    }
+    return `Qm${Math.abs(h).toString(16)}`;
+}
+
+// ---------------------------------------------------------------------------
+// linkToActivity
+// ---------------------------------------------------------------------------
+
+describe("linkToActivity", () => {
+    it("produces a Create{Note} with ad4m:Link tag for semantic strategy", () => {
+        const link = makeLinkExpression();
+        const activity = linkToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "hash123",
+            settings: {
+                ...DEFAULT_SETTINGS,
+                rendering: { ...DEFAULT_SETTINGS.rendering, strategy: "semantic" },
+            },
+        });
+
+        assert.equal(activity.type, "Create");
+        assert.equal(activity.actor, ACTOR_URL);
+        assert.ok(activity.id.includes("hash123"));
+        assert.ok(Array.isArray(activity.to));
+        assert.ok(activity.to![0].includes("/followers"));
+
+        const obj = activity.object as APObject;
+        assert.equal(obj.type, "Note");
+        assert.equal(obj.attributedTo, ACTOR_URL);
+        assert.ok(obj.content?.includes("literal://hello"));
+        assert.ok(obj.content?.includes("sioc://content_of"));
+        assert.ok(obj.content?.includes("literal://world"));
+        assert.equal(obj.context, GROUP_ACTOR_URL);
+
+        // ad4m:Link tag present
+        const tag = obj.tag?.find((t): t is APLinkTag => t.type === "ad4m:Link");
+        assert.ok(tag);
+        assert.equal(tag!["ad4m:source"], "literal://hello");
+        assert.equal(tag!["ad4m:predicate"], "sioc://content_of");
+        assert.equal(tag!["ad4m:target"], "literal://world");
+        assert.equal(tag!["ad4m:proof"], "abc123");
+    });
+
+    it("produces a chat-style Note when predicate matches chatPredicates and resolvedContent provided", () => {
+        const link = makeChatLink();
+        const activity = linkToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "chathash",
+            settings: DEFAULT_SETTINGS, // strategy: "auto"
+            resolvedContent: "Hey everyone, meeting at 3pm!",
+        });
+
+        const obj = activity.object as APObject;
+        assert.equal(obj.content, "Hey everyone, meeting at 3pm!");
+        // ad4m:Link tag should still be present (includeAd4mTags: true)
+        const tag = obj.tag?.find((t): t is APLinkTag => t.type === "ad4m:Link");
+        assert.ok(tag);
+    });
+
+    it("falls back to semantic when auto and no resolved content", () => {
+        const link = makeChatLink();
+        const activity = linkToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "fallback",
+            settings: DEFAULT_SETTINGS, // strategy: "auto"
+            // no resolvedContent
+        });
+
+        const obj = activity.object as APObject;
+        // Should contain HTML with the triple, not just the target
+        assert.ok(obj.content?.includes("channel://main"));
+    });
+
+    it("raw strategy emits a 🔗 triple", () => {
+        const link = makeLinkExpression();
+        const activity = linkToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "rawhash",
+            settings: {
+                ...DEFAULT_SETTINGS,
+                rendering: { ...DEFAULT_SETTINGS.rendering, strategy: "raw" },
+            },
+        });
+
+        const obj = activity.object as APObject;
+        assert.ok(obj.content?.includes("🔗"));
+    });
+
+    it("omits ad4m:Link tag when includeAd4mTags is false in chat mode", () => {
+        const link = makeChatLink();
+        const activity = linkToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "notags",
+            settings: {
+                ...DEFAULT_SETTINGS,
+                rendering: {
+                    ...DEFAULT_SETTINGS.rendering,
+                    strategy: "chat",
+                    includeAd4mTags: false,
+                },
+            },
+            resolvedContent: "Hello!",
+        });
+
+        const obj = activity.object as APObject;
+        assert.equal(obj.tag?.length ?? 0, 0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// removalToActivity
+// ---------------------------------------------------------------------------
+
+describe("removalToActivity", () => {
+    it("produces a Delete activity", () => {
+        const link = makeLinkExpression();
+        const activity = removalToActivity(link, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            linkHash: "delhash",
+        });
+
+        assert.equal(activity.type, "Delete");
+        assert.equal(activity.actor, ACTOR_URL);
+        assert.ok(activity.id.includes("del-delhash"));
+        assert.equal(typeof activity.object, "string");
+        assert.ok((activity.object as string).includes("delhash"));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// diffToActivities
+// ---------------------------------------------------------------------------
+
+describe("diffToActivities", () => {
+    it("converts additions and removals to corresponding activities", () => {
+        const addition = makeLinkExpression();
+        const removal = makeLinkExpression({
+            data: { source: "a", target: "b", predicate: "c" },
+        });
+
+        const diff: PerspectiveDiff = {
+            additions: [addition],
+            removals: [removal],
+        };
+
+        const activities = diffToActivities(diff, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            settings: DEFAULT_SETTINGS,
+            hashFn: simpleHash,
+        });
+
+        assert.equal(activities.length, 2);
+        assert.equal(activities[0].type, "Create");
+        assert.equal(activities[1].type, "Delete");
+    });
+
+    it("handles empty diff", () => {
+        const diff: PerspectiveDiff = { additions: [], removals: [] };
+        const activities = diffToActivities(diff, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            settings: DEFAULT_SETTINGS,
+            hashFn: simpleHash,
+        });
+        assert.equal(activities.length, 0);
+    });
+
+    it("uses resolvedContent map when provided", () => {
+        const link = makeChatLink();
+        const diff: PerspectiveDiff = { additions: [link], removals: [] };
+        const resolvedContent = new Map([["expr://msg-001", "Resolved message!"]]);
+
+        const activities = diffToActivities(diff, {
+            groupActorUrl: GROUP_ACTOR_URL,
+            actorUrl: ACTOR_URL,
+            settings: DEFAULT_SETTINGS,
+            hashFn: simpleHash,
+            resolvedContent,
+        });
+
+        const obj = activities[0].object as APObject;
+        assert.equal(obj.content, "Resolved message!");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// activityToLink (Inbound)
+// ---------------------------------------------------------------------------
+
+describe("activityToLink", () => {
+    const NEIGHBOURHOOD = "neighbourhood://test";
+
+    it("reconstructs a native link from ad4m:Link tag", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Create",
+            id: "https://example.com/activities/1",
+            actor: "https://mastodon.social/users/alice",
+            published: "2026-05-02T00:00:00Z",
+            object: {
+                type: "Note",
+                id: "https://example.com/objects/1",
+                content: "Hello",
+                tag: [
+                    {
+                        type: "ad4m:Link",
+                        "ad4m:source": "literal://hello",
+                        "ad4m:predicate": "sioc://content_of",
+                        "ad4m:target": "literal://world",
+                        "ad4m:proof": "sig123",
+                    } as APLinkTag,
+                ],
+            },
+        };
+
+        const link = activityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.source, "literal://hello");
+        assert.equal(link!.data.predicate, "sioc://content_of");
+        assert.equal(link!.data.target, "literal://world");
+        assert.equal(link!.proof.signature, "sig123");
+        assert.equal(link!.author, "ap:https://mastodon.social/users/alice");
+    });
+
+    it("creates synthetic link for plain AP Note", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Create",
+            id: "https://example.com/activities/2",
+            actor: "https://mastodon.social/users/bob",
+            published: "2026-05-02T12:00:00Z",
+            object: {
+                type: "Note",
+                id: "https://example.com/objects/2",
+                content: "Just a regular toot",
+            },
+        };
+
+        const link = activityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.source, NEIGHBOURHOOD);
+        assert.equal(link!.data.predicate, "ap://external-note");
+        assert.equal(link!.data.target, "https://example.com/objects/2");
+        assert.equal(link!.author, "ap:https://mastodon.social/users/bob");
+    });
+
+    it("returns null for non-Create activities", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Like",
+            id: "https://example.com/activities/3",
+            actor: "https://mastodon.social/users/bob",
+            published: "2026-05-02T12:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+        assert.equal(activityToLink(activity, NEIGHBOURHOOD), null);
+    });
+
+    it("returns null for string object (tombstone)", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Create",
+            id: "https://example.com/activities/4",
+            actor: "https://example.com/users/bob",
+            published: "2026-05-02T12:00:00Z",
+            object: "https://example.com/objects/4",
+        };
+        assert.equal(activityToLink(activity, NEIGHBOURHOOD), null);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// deleteActivityToRemoval
+// ---------------------------------------------------------------------------
+
+describe("deleteActivityToRemoval", () => {
+    const NEIGHBOURHOOD = "neighbourhood://test";
+
+    it("creates a removal link from Delete activity", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Delete",
+            id: "https://example.com/activities/del-1",
+            actor: "https://mastodon.social/users/alice",
+            published: "2026-05-02T01:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+
+        const link = deleteActivityToRemoval(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.source, NEIGHBOURHOOD);
+        assert.equal(link!.data.predicate, "ap://deleted");
+        assert.equal(link!.data.target, "https://example.com/objects/1");
+    });
+
+    it("handles object as APObject", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Delete",
+            id: "https://example.com/activities/del-2",
+            actor: "https://example.com/users/bob",
+            published: "2026-05-02T02:00:00Z",
+            object: {
+                type: "Note",
+                id: "https://example.com/objects/2",
+            },
+        };
+
+        const link = deleteActivityToRemoval(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.target, "https://example.com/objects/2");
+    });
+
+    it("returns null for non-Delete activities", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Create",
+            id: "https://example.com/activities/1",
+            actor: "https://example.com/users/bob",
+            published: "2026-05-02T00:00:00Z",
+            object: { type: "Note", id: "https://example.com/objects/1" },
+        };
+        assert.equal(deleteActivityToRemoval(activity, NEIGHBOURHOOD), null);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// likeActivityToLink
+// ---------------------------------------------------------------------------
+
+describe("likeActivityToLink", () => {
+    it("creates a liked-by link", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Like",
+            id: "https://example.com/activities/like-1",
+            actor: "https://mastodon.social/users/carol",
+            published: "2026-05-02T03:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+
+        const link = likeActivityToLink(activity);
+        assert.ok(link);
+        assert.equal(link!.data.source, "https://example.com/objects/1");
+        assert.equal(link!.data.predicate, "ap://liked-by");
+        assert.equal(link!.data.target, "https://mastodon.social/users/carol");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// announceActivityToLink
+// ---------------------------------------------------------------------------
+
+describe("announceActivityToLink", () => {
+    it("creates an announced-by link", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Announce",
+            id: "https://example.com/activities/boost-1",
+            actor: "https://mastodon.social/users/dave",
+            published: "2026-05-02T04:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+
+        const link = announceActivityToLink(activity);
+        assert.ok(link);
+        assert.equal(link!.data.source, "https://example.com/objects/1");
+        assert.equal(link!.data.predicate, "ap://announced-by");
+        assert.equal(link!.data.target, "https://mastodon.social/users/dave");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// inboundActivityToLink (dispatcher)
+// ---------------------------------------------------------------------------
+
+describe("inboundActivityToLink", () => {
+    const NEIGHBOURHOOD = "neighbourhood://test";
+
+    it("routes Create to activityToLink", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Create",
+            id: "https://example.com/activities/1",
+            actor: "https://example.com/users/alice",
+            published: "2026-05-02T00:00:00Z",
+            object: {
+                type: "Note",
+                id: "https://example.com/objects/1",
+                content: "Hello",
+            },
+        };
+        const link = inboundActivityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.predicate, "ap://external-note");
+    });
+
+    it("routes Delete to deleteActivityToRemoval", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Delete",
+            id: "https://example.com/activities/del-1",
+            actor: "https://example.com/users/alice",
+            published: "2026-05-02T00:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+        const link = inboundActivityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.predicate, "ap://deleted");
+    });
+
+    it("routes Like to likeActivityToLink", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Like",
+            id: "https://example.com/activities/like-1",
+            actor: "https://example.com/users/bob",
+            published: "2026-05-02T00:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+        const link = inboundActivityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.predicate, "ap://liked-by");
+    });
+
+    it("routes Announce to announceActivityToLink", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Announce",
+            id: "https://example.com/activities/boost-1",
+            actor: "https://example.com/users/carol",
+            published: "2026-05-02T00:00:00Z",
+            object: "https://example.com/objects/1",
+        };
+        const link = inboundActivityToLink(activity, NEIGHBOURHOOD);
+        assert.ok(link);
+        assert.equal(link!.data.predicate, "ap://announced-by");
+    });
+
+    it("returns null for unsupported activity types", () => {
+        const activity: APActivity = {
+            "@context": ["https://www.w3.org/ns/activitystreams"],
+            type: "Follow",
+            id: "https://example.com/activities/follow-1",
+            actor: "https://example.com/users/alice",
+            published: "2026-05-02T00:00:00Z",
+            object: "https://example.com/users/bob",
+        };
+        assert.equal(inboundActivityToLink(activity, NEIGHBOURHOOD), null);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
+
+describe("toISO", () => {
+    it("converts an ISO string passthrough", () => {
+        const result = toISO("2026-05-02T00:00:00.000Z");
+        assert.equal(result, "2026-05-02T00:00:00.000Z");
+    });
+
+    it("converts epoch ms to ISO", () => {
+        const result = toISO(1746144000000); // 2025-05-02T00:00:00Z
+        assert.ok(result.includes("2025-05-0"));
+    });
+});
+
+describe("linkContentKey", () => {
+    it("produces a deterministic key", () => {
+        const link = makeLinkExpression();
+        const key1 = linkContentKey(link);
+        const key2 = linkContentKey(link);
+        assert.equal(key1, key2);
+    });
+
+    it("differs for different links", () => {
+        const link1 = makeLinkExpression();
+        const link2 = makeLinkExpression({
+            data: { source: "a", target: "b", predicate: "c" },
+        });
+        assert.notEqual(linkContentKey(link1), linkContentKey(link2));
+    });
+});
