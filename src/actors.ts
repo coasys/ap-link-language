@@ -1,19 +1,15 @@
 /**
  * Actor resolution and cache — runtime wrapper.
  *
- * Uses ad4m:host storage for caching and httpFetch for retrieval.
+ * Uses injected StorageAdapter for caching and Transport for retrieval.
  * Delegates pure logic to actors.pure.ts.
  *
  * Spec §2.4.
  */
 
-import {
-    httpFetch,
-    hash,
-    storageGet,
-    storagePut,
-    storageDelete,
-} from "@coasys/ad4m-ldk";
+import { getRuntime } from "./runtime-interface.js";
+import { getStorage } from "./storage-interface.js";
+import { getTransport } from "./transport.js";
 
 import type { ActorInfo } from "./actors.pure.js";
 import {
@@ -27,7 +23,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function actorCacheKey(actorUrl: string): string {
-    return `actors/${hash(actorUrl)}`;
+    return `actors/${getRuntime().hash(actorUrl)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -37,12 +33,14 @@ function actorCacheKey(actorUrl: string): string {
 /**
  * Resolve an AP Actor document by URL.
  *
- * Checks local cache first; fetches via httpFetch if not cached or expired.
+ * Checks local cache first; fetches via Transport if not cached or expired.
  * Caches the result on success.
  */
 export async function resolveActor(actorUrl: string): Promise<ActorInfo | null> {
+    const storage = getStorage();
+
     // Check cache
-    const cached = storageGet(actorCacheKey(actorUrl));
+    const cached = storage.get(actorCacheKey(actorUrl));
     if (cached) {
         try {
             const actor = JSON.parse(cached) as ActorInfo;
@@ -54,20 +52,21 @@ export async function resolveActor(actorUrl: string): Promise<ActorInfo | null> 
         }
     }
 
-    // Fetch the actor document
+    // Fetch the actor document via transport
     try {
-        const headers = JSON.stringify({
-            Accept: "application/activity+json, application/ld+json",
-        });
-        const responseRaw = await httpFetch(actorUrl, "GET", headers, "");
-        const parsed = JSON.parse(responseRaw);
+        const response = await getTransport().fetch(
+            actorUrl,
+            "GET",
+            { Accept: "application/activity+json, application/ld+json" },
+            "",
+        );
 
-        if (parsed.status >= 200 && parsed.status < 300) {
-            const body = JSON.parse(parsed.body);
+        if (response.status >= 200 && response.status < 300) {
+            const body = JSON.parse(response.body);
             const actor = parseActorDocument(body);
             if (actor) {
                 // Cache the result
-                storagePut(actorCacheKey(actorUrl), JSON.stringify(actor));
+                storage.put(actorCacheKey(actorUrl), JSON.stringify(actor));
                 return actor;
             }
         }
@@ -99,5 +98,5 @@ export async function getActorInbox(actorUrl: string): Promise<string | null> {
  * Invalidate a cached actor document.
  */
 export function invalidateActorCache(actorUrl: string): void {
-    storageDelete(actorCacheKey(actorUrl));
+    getStorage().delete(actorCacheKey(actorUrl));
 }

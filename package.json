@@ -1,6 +1,6 @@
 {
   "name": "@coasys/ap-link-language",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "ActivityPub Link Language for AD4M — bridges Perspectives to Fediverse via AP federation",
   "type": "module",
   "main": "index.ts",

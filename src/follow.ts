@@ -1,20 +1,15 @@
 /**
  * Follow protocol — runtime wrapper.
- * Uses ad4m:host httpFetch for delivering Accept activities
- * and storage for pending follows.
+ * Uses Transport for delivering Accept activities and StorageAdapter
+ * for pending follows.
  *
  * Delegates pure logic to follow.pure.ts.
  * Spec §2.2.
  */
 
-import {
-    httpFetch,
-    hash,
-    storageGet,
-    storagePut,
-    storageDelete,
-    storageListKeys,
-} from "@coasys/ad4m-ldk";
+import { getRuntime } from "./runtime-interface.js";
+import { getStorage } from "./storage-interface.js";
+import { getTransport } from "./transport.js";
 
 import type { APActivity } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
@@ -29,7 +24,7 @@ import { registerFollower, removeFollower } from "./security.js";
 // ---------------------------------------------------------------------------
 
 function pendingFollowKey(actorUrl: string): string {
-    return `pending-follows/${hash(actorUrl)}`;
+    return `pending-follows/${getRuntime().hash(actorUrl)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +61,7 @@ export async function handleFollow(
             const headers = signedHeaders(actorKeyId, inboxUrl, body);
 
             try {
-                await httpFetch(inboxUrl, "POST", JSON.stringify(headers), body);
+                await getTransport().fetch(inboxUrl, "POST", headers, body);
             } catch (err) {
                 console.error(`[ap-link-language] Failed to deliver Accept to ${inboxUrl}:`, err);
             }
@@ -76,7 +71,7 @@ export async function handleFollow(
         registerFollower(followerActorUrl, inboxUrl, followerDid);
     } else if (result.pending) {
         // Store as pending follow for admin review
-        storagePut(pendingFollowKey(followerActorUrl), JSON.stringify(activity));
+        getStorage().put(pendingFollowKey(followerActorUrl), JSON.stringify(activity));
     }
 
     return result;
@@ -112,7 +107,7 @@ export async function sendFollowRequest(
     const headers = signedHeaders(actorKeyId, targetInbox, body);
 
     try {
-        await httpFetch(targetInbox, "POST", JSON.stringify(headers), body);
+        await getTransport().fetch(targetInbox, "POST", headers, body);
     } catch (err) {
         console.error(`[ap-link-language] Failed to send Follow to ${targetInbox}:`, err);
     }
@@ -122,10 +117,11 @@ export async function sendFollowRequest(
  * List pending follow requests awaiting admin approval.
  */
 export function listPendingFollows(): APActivity[] {
-    const keys = storageListKeys("pending-follows/");
+    const storage = getStorage();
+    const keys = storage.listKeys("pending-follows/");
     const activities: APActivity[] = [];
     for (const key of keys) {
-        const raw = storageGet(key);
+        const raw = storage.get(key);
         if (raw) {
             try {
                 activities.push(JSON.parse(raw) as APActivity);
@@ -146,8 +142,9 @@ export async function approvePendingFollow(
     actorKeyId: string,
     settings: APLanguageSettings,
 ): Promise<void> {
+    const storage = getStorage();
     const key = pendingFollowKey(actorUrl);
-    const raw = storageGet(key);
+    const raw = storage.get(key);
     if (!raw) return;
 
     const activity = JSON.parse(raw) as APActivity;
@@ -157,5 +154,5 @@ export async function approvePendingFollow(
     await handleFollow(activity, groupActorUrl, actorKeyId, autoSettings);
 
     // Remove from pending
-    storageDelete(key);
+    storage.delete(key);
 }

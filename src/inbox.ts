@@ -7,7 +7,8 @@
  * Spec §2.1.
  */
 
-import { emitPerspectiveDiff, storageGet, storagePut } from "@coasys/ad4m-ldk";
+import { getRuntime } from "./runtime-interface.js";
+import { getStorage } from "./storage-interface.js";
 
 import type { APActivity } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
@@ -20,18 +21,6 @@ import { resolveAuthor } from "./actors.js";
 import { isAllowedToPost, checkRateLimit } from "./security.js";
 import { handleFollow, handleUndo } from "./follow.js";
 import * as store from "./store.js";
-
-// ---------------------------------------------------------------------------
-// Storage helpers (thin wrappers for dual-language origin tracking)
-// ---------------------------------------------------------------------------
-
-function storageGetForInbox(key: string): string | null {
-    return storageGet(key);
-}
-
-function storagePutForInbox(key: string, value: string): void {
-    storagePut(key, value);
-}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -85,6 +74,8 @@ export async function processInboxSignal(
     const result = routeInboundActivity(activity, neighbourhoodUrl, settings, verified, authorDid, groupActorUrl);
 
     // 5. Handle results
+    const storage = getStorage();
+
     switch (result.kind) {
         case "link-diff":
             // Store links and emit perspective diff
@@ -94,16 +85,16 @@ export async function processInboxSignal(
             for (const link of [...result.diff.additions, ...result.diff.removals]) {
                 const h = store.hashLink(link);
                 const originKey = linkOriginKey(h);
-                const existing = storageGetForInbox(originKey);
+                const existing = storage.get(originKey);
                 if (existing === "native") {
                     // Already exists from native sync — mark as dual
-                    storagePutForInbox(originKey, "dual");
+                    storage.put(originKey, "dual");
                 } else if (!existing) {
-                    storagePutForInbox(originKey, "ap");
+                    storage.put(originKey, "ap");
                 }
             }
 
-            emitPerspectiveDiff(result.diff);
+            getRuntime().emitPerspectiveDiff(result.diff);
             break;
 
         case "follow":

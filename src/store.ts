@@ -12,15 +12,29 @@
  *   peers/{did}                      → peer metadata JSON
  */
 
-import {
-    storageGet,
-    storagePut,
-    storageDelete,
-    storageListKeys,
-    hash,
-} from "@coasys/ad4m-ldk";
+import type { StorageAdapter } from "./storage-interface.js";
+import { getStorage } from "./storage-interface.js";
+import { getRuntime } from "./runtime-interface.js";
 
 import type { LinkExpression, PerspectiveDiff, Perspective } from "./types.js";
+
+let _hashFn: ((data: string) => string) | null = null;
+
+/**
+ * Initialize the store module.
+ *
+ * Call once during language init() after initStorage() and initRuntime()
+ * have been called. Optionally provide a custom hash function
+ * (defaults to runtime adapter's hash).
+ */
+export function initStore(hashFn?: (data: string) => string): void {
+    _hashFn = hashFn ?? null;
+}
+
+function getHashFn(): (data: string) => string {
+    if (_hashFn) return _hashFn;
+    return getRuntime().hash;
+}
 
 // ---------------------------------------------------------------------------
 // Key helpers
@@ -61,7 +75,7 @@ export function hashLink(link: LinkExpression): string {
         author: link.author,
         timestamp: link.timestamp,
     });
-    return hash(content);
+    return getHashFn()(content);
 }
 
 /**
@@ -69,15 +83,16 @@ export function hashLink(link: LinkExpression): string {
  */
 export function putLink(link: LinkExpression): string {
     const h = hashLink(link);
-    storagePut(linkKey(h), JSON.stringify(link));
+    const storage = getStorage();
+    storage.put(linkKey(h), JSON.stringify(link));
 
     const source = link.data.source || "";
     const target = link.data.target || "";
     const predicate = link.data.predicate || "";
 
-    if (source) storagePut(sourceIndexKey(source, h), h);
-    if (target) storagePut(targetIndexKey(target, h), h);
-    if (predicate) storagePut(predIndexKey(predicate, h), h);
+    if (source) storage.put(sourceIndexKey(source, h), h);
+    if (target) storage.put(targetIndexKey(target, h), h);
+    if (predicate) storage.put(predIndexKey(predicate, h), h);
 
     return h;
 }
@@ -87,22 +102,23 @@ export function putLink(link: LinkExpression): string {
  */
 export function removeLink(link: LinkExpression): void {
     const h = hashLink(link);
-    storageDelete(linkKey(h));
+    const storage = getStorage();
+    storage.delete(linkKey(h));
 
     const source = link.data.source || "";
     const target = link.data.target || "";
     const predicate = link.data.predicate || "";
 
-    if (source) storageDelete(sourceIndexKey(source, h));
-    if (target) storageDelete(targetIndexKey(target, h));
-    if (predicate) storageDelete(predIndexKey(predicate, h));
+    if (source) storage.delete(sourceIndexKey(source, h));
+    if (target) storage.delete(targetIndexKey(target, h));
+    if (predicate) storage.delete(predIndexKey(predicate, h));
 }
 
 /**
  * Retrieve a link by its hash.
  */
 export function getLink(linkHash: string): LinkExpression | null {
-    const raw = storageGet(linkKey(linkHash));
+    const raw = getStorage().get(linkKey(linkHash));
     if (!raw) return null;
     return JSON.parse(raw) as LinkExpression;
 }
@@ -135,31 +151,32 @@ export interface LinkQuery {
  */
 export function queryLinks(query: LinkQuery): LinkExpression[] {
     const { source, target, predicate } = query;
+    const storage = getStorage();
 
     // Determine which index to use for the primary scan
     let candidateHashes: string[];
 
     if (source) {
-        const keys = storageListKeys(`links-by-source/${source}/`);
+        const keys = storage.listKeys(`links-by-source/${source}/`);
         candidateHashes = keys.map((k: string) => {
-            const raw = storageGet(k);
+            const raw = storage.get(k);
             return raw || "";
         }).filter(Boolean);
     } else if (target) {
-        const keys = storageListKeys(`links-by-target/${target}/`);
+        const keys = storage.listKeys(`links-by-target/${target}/`);
         candidateHashes = keys.map((k: string) => {
-            const raw = storageGet(k);
+            const raw = storage.get(k);
             return raw || "";
         }).filter(Boolean);
     } else if (predicate) {
-        const keys = storageListKeys(`links-by-pred/${predicate}/`);
+        const keys = storage.listKeys(`links-by-pred/${predicate}/`);
         candidateHashes = keys.map((k: string) => {
-            const raw = storageGet(k);
+            const raw = storage.get(k);
             return raw || "";
         }).filter(Boolean);
     } else {
         // Full scan
-        const keys = storageListKeys("links/");
+        const keys = storage.listKeys("links/");
         candidateHashes = keys.map((k: string) => k.replace("links/", ""));
     }
 
@@ -189,11 +206,11 @@ export function queryLinks(query: LinkQuery): LinkExpression[] {
  * Return all links in the store as a Perspective.
  */
 export function allLinks(): Perspective {
-    const keys = storageListKeys("links/");
+    const keys = getStorage().listKeys("links/");
     const links: LinkExpression[] = [];
 
     for (const key of keys) {
-        const raw = storageGet(key);
+        const raw = getStorage().get(key);
         if (raw) {
             links.push(JSON.parse(raw) as LinkExpression);
         }
@@ -209,11 +226,11 @@ export function allLinks(): Perspective {
 const REVISION_KEY = "revision";
 
 export function getRevision(): string | null {
-    return storageGet(REVISION_KEY);
+    return getStorage().get(REVISION_KEY);
 }
 
 export function setRevision(rev: string): void {
-    storagePut(REVISION_KEY, rev);
+    getStorage().put(REVISION_KEY, rev);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,13 +238,13 @@ export function setRevision(rev: string): void {
 // ---------------------------------------------------------------------------
 
 export function putAPObject(apId: string, json: string): void {
-    const key = `ap-objects/${hash(apId)}`;
-    storagePut(key, json);
+    const key = `ap-objects/${getHashFn()(apId)}`;
+    getStorage().put(key, json);
 }
 
 export function getAPObject(apId: string): string | null {
-    const key = `ap-objects/${hash(apId)}`;
-    return storageGet(key);
+    const key = `ap-objects/${getHashFn()(apId)}`;
+    return getStorage().get(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,20 +252,20 @@ export function getAPObject(apId: string): string | null {
 // ---------------------------------------------------------------------------
 
 export function setPeer(did: string, metadata: Record<string, unknown> = {}): void {
-    storagePut(peerKey(did), JSON.stringify(metadata));
+    getStorage().put(peerKey(did), JSON.stringify(metadata));
 }
 
 export function removePeer(did: string): void {
-    storageDelete(peerKey(did));
+    getStorage().delete(peerKey(did));
 }
 
 export function listPeers(prefix: string = "peers/"): string[] {
-    const keys = storageListKeys(prefix);
+    const keys = getStorage().listKeys(prefix);
     return keys.map((k: string) => k.replace(prefix, ""));
 }
 
 export function getPeerMetadata(did: string): Record<string, unknown> | null {
-    const raw = storageGet(peerKey(did));
+    const raw = getStorage().get(peerKey(did));
     if (!raw) return null;
     return JSON.parse(raw);
 }

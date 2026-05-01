@@ -1,0 +1,43 @@
+// HTTP extension for AD4M Languages
+//
+// Optional capability — Languages that import this must tolerate runtimes
+// that don't provide it (the wrappers throw at call time).
+//
+// This extension enables Languages compiled to WASM to make outbound HTTP
+// requests through the executor's sandboxed HTTP client. The executor
+// controls which URLs are reachable (allowlist, deny-list, rate limits)
+// and applies HTTP Signature re-signing before the request leaves the
+// host.
+//
+// When the executor does not install this import, any call to `fetch`
+// traps with "http-ext not available". Languages should wrap calls in
+// a transport abstraction that can fall back to signal-based delegation
+// (Spec §5.5, Option A) or simply report a transient error.
+//
+// Reference: activitypub-link-language.md §5.5 Option B
+
+interface http-ext {
+    // HTTP request descriptor
+    record http-request {
+        method: string,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+    }
+
+    // HTTP response descriptor
+    record http-response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    // Synchronous HTTP fetch
+    //
+    // The executor sandbox may:
+    //   - reject disallowed URLs (returns err("url not permitted"))
+    //   - impose per-language rate limits (returns err("rate limited"))
+    //   - re-sign the request with the agent's RSA key
+    //   - timeout after a configured duration (returns err("timeout"))
+    fetch: func(req: http-request) -> result<http-response, string>
+}

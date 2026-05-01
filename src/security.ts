@@ -1,18 +1,13 @@
 /**
  * Security — membership verification, rate limiting, block list.
- * Runtime wrapper: uses ad4m:host storage KV.
+ * Runtime wrapper: uses injected StorageAdapter.
  * Delegates pure logic to security.pure.ts.
  *
  * Spec §14.
  */
 
-import {
-    hash,
-    storageGet,
-    storagePut,
-    storageDelete,
-    storageListKeys,
-} from "@coasys/ad4m-ldk";
+import { getRuntime } from "./runtime-interface.js";
+import { getStorage } from "./storage-interface.js";
 
 import type { APLanguageSettings } from "./settings.js";
 import type { RateLimitState, MembershipResult } from "./security.pure.js";
@@ -23,15 +18,15 @@ import { checkMembership, checkRateLimitPure } from "./security.pure.js";
 // ---------------------------------------------------------------------------
 
 function rateLimitKey(actorUrl: string): string {
-    return `rate-limit/${hash(actorUrl)}`;
+    return `rate-limit/${getRuntime().hash(actorUrl)}`;
 }
 
 function blockedKey(actorUrl: string): string {
-    return `blocked/${hash(actorUrl)}`;
+    return `blocked/${getRuntime().hash(actorUrl)}`;
 }
 
 function followerKey(actorUrl: string): string {
-    return `followers/${hash(actorUrl)}`;
+    return `followers/${getRuntime().hash(actorUrl)}`;
 }
 
 function memberKey(did: string): string {
@@ -51,17 +46,19 @@ export function isAllowedToPost(
     settings: APLanguageSettings,
     authorDid?: string,
 ): MembershipResult {
+    const storage = getStorage();
+
     // Check if blocked first
     if (isBlocked(actorUrl)) {
         return { allowed: false, reason: "Actor is blocked" };
     }
 
     // Resolve follower and member status from storage
-    const isFollower = storageGet(followerKey(actorUrl)) !== null;
+    const isFollower = storage.get(followerKey(actorUrl)) !== null;
 
     // A member is someone in the peers store with a DID
     const isMember = authorDid
-        ? storageGet(memberKey(authorDid)) !== null
+        ? storage.get(memberKey(authorDid)) !== null
         : false;
 
     return checkMembership(settings.membership, isFollower, isMember);
@@ -79,8 +76,9 @@ export function checkRateLimit(
     actorUrl: string,
     settings: APLanguageSettings,
 ): boolean {
+    const storage = getStorage();
     const key = rateLimitKey(actorUrl);
-    const rawState = storageGet(key);
+    const rawState = storage.get(key);
     let state: RateLimitState | null = null;
 
     if (rawState) {
@@ -94,7 +92,7 @@ export function checkRateLimit(
     const result = checkRateLimitPure(state, settings.rateLimit);
 
     // Persist updated state
-    storagePut(key, JSON.stringify(result.newState));
+    storage.put(key, JSON.stringify(result.newState));
 
     return result.allowed;
 }
@@ -107,21 +105,21 @@ export function checkRateLimit(
  * Check if an actor is blocked.
  */
 export function isBlocked(actorUrl: string): boolean {
-    return storageGet(blockedKey(actorUrl)) !== null;
+    return getStorage().get(blockedKey(actorUrl)) !== null;
 }
 
 /**
  * Block an actor.
  */
 export function blockActor(actorUrl: string): void {
-    storagePut(blockedKey(actorUrl), String(Date.now()));
+    getStorage().put(blockedKey(actorUrl), String(Date.now()));
 }
 
 /**
  * Unblock an actor.
  */
 export function unblockActor(actorUrl: string): void {
-    storageDelete(blockedKey(actorUrl));
+    getStorage().delete(blockedKey(actorUrl));
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +134,8 @@ export function registerFollower(
     inboxUrl: string,
     did?: string,
 ): void {
-    storagePut(followerKey(actorUrl), JSON.stringify({
+    const storage = getStorage();
+    storage.put(followerKey(actorUrl), JSON.stringify({
         actorUrl,
         inboxUrl,
         did,
@@ -145,7 +144,7 @@ export function registerFollower(
 
     // Also register in peers store if they have a DID
     if (did) {
-        storagePut(memberKey(did), JSON.stringify({
+        storage.put(memberKey(did), JSON.stringify({
             inbox: inboxUrl,
             actorUrl,
             local: false,
@@ -157,29 +156,31 @@ export function registerFollower(
  * Remove a follower.
  */
 export function removeFollower(actorUrl: string): void {
+    const storage = getStorage();
     // Read follower info to get DID before removing
-    const raw = storageGet(followerKey(actorUrl));
+    const raw = storage.get(followerKey(actorUrl));
     if (raw) {
         try {
             const info = JSON.parse(raw);
             if (info.did) {
-                storageDelete(memberKey(info.did));
+                storage.delete(memberKey(info.did));
             }
         } catch {
             // ignore parse errors
         }
     }
-    storageDelete(followerKey(actorUrl));
+    storage.delete(followerKey(actorUrl));
 }
 
 /**
  * Get all follower inbox URLs.
  */
 export function getFollowerInboxes(): string[] {
-    const keys = storageListKeys("followers/");
+    const storage = getStorage();
+    const keys = storage.listKeys("followers/");
     const inboxes: string[] = [];
     for (const key of keys) {
-        const raw = storageGet(key);
+        const raw = storage.get(key);
         if (raw) {
             try {
                 const info = JSON.parse(raw);

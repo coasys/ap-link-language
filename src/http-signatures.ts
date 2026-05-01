@@ -14,10 +14,7 @@
  * signature against the actor's publicKey fetched via the actor URL.
  */
 
-import {
-    agentSignStringHex,
-    agentSigningKeyId,
-} from "@coasys/ad4m-ldk";
+import { getSigning } from "./signing-interface.js";
 
 // ---------------------------------------------------------------------------
 // Digest
@@ -82,7 +79,7 @@ export function signRequest(
     components: SignatureComponents,
 ): string {
     const signingString = buildSigningString(components);
-    const signatureHex = agentSignStringHex(signingString);
+    const signatureHex = getSigning().signStringHex(signingString);
 
     const headers = components.digest
         ? "(request-target) host date digest"

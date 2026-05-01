@@ -19,8 +19,6 @@ import {
     hash,
     languageSettings,
     emitPerspectiveDiff,
-    storageGet,
-    storagePut,
 } from "@coasys/ad4m-ldk";
 
 import type { PerspectiveDiff, LinkExpression } from "./src/types.js";
@@ -35,6 +33,16 @@ import { syncFromOutbox } from "./src/sync.js";
 import { buildGroupActor } from "./src/activitypub.js";
 import { processInboxSignal } from "./src/inbox.js";
 import { getFollowerInboxes } from "./src/security.js";
+
+// Phase 4: Adapter imports (interfaces for singletons, Deno impls for init)
+import { initTransport } from "./src/transport.js";
+import { DenoTransport } from "./src/transport-deno.js";
+import { initStorage, getStorage } from "./src/storage-interface.js";
+import { DenoStorageAdapter } from "./src/storage-deno.js";
+import { initSigning } from "./src/signing-interface.js";
+import { DenoSigningAdapter } from "./src/signing-deno.js";
+import { initRuntime } from "./src/runtime-interface.js";
+import { DenoRuntime } from "./src/runtime-deno.js";
 
 // ---------------------------------------------------------------------------
 // Template Variables (per Spec §6)
@@ -92,11 +100,18 @@ function followerInboxes(): string[] {
 
 const language = defineLanguage({
     name: "@coasys/ap-link-language",
-    version: "0.2.0",
+    version: "0.4.0",
 
     isPublic: true,
 
     async init() {
+        // Phase 4: Initialize adapters before anything else
+        initRuntime(new DenoRuntime());
+        initStorage(new DenoStorageAdapter());
+        initTransport(new DenoTransport());
+        initSigning(new DenoSigningAdapter());
+        store.initStore();
+
         myDid = agentDid();
         settings = parseSettings(languageSettings());
         actorKeyId = `${GROUP_ACTOR_URL}#main-key`;
@@ -132,19 +147,20 @@ const language = defineLanguage({
 
             // 3. Build federation filter using dual-language origin tracking
             const federationFilter = (linkHash: string): boolean => {
-                return shouldFederate(linkHash, (key) => storageGet(key));
+                return shouldFederate(linkHash, (key) => getStorage().get(key));
             };
 
             // 4. Track origins for new native commits
             for (const link of diff.additions) {
                 const h = store.hashLink(link);
                 const originKey = linkOriginKey(h);
-                const existing = storageGet(originKey);
+                const storage = getStorage();
+                const existing = storage.get(originKey);
                 if (existing === "ap") {
                     // Arrived via AP, now also committed natively — mark as dual
-                    storagePut(originKey, "dual");
+                    storage.put(originKey, "dual");
                 } else if (!existing) {
-                    storagePut(originKey, "native");
+                    storage.put(originKey, "native");
                 }
             }
 

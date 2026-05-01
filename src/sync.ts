@@ -8,7 +8,7 @@
  * - Respects syncMode (publish-only skips sync)
  */
 
-import { httpFetch } from "@coasys/ad4m-ldk";
+import { getTransport } from "./transport.js";
 import type { PerspectiveDiff, LinkExpression } from "./types.js";
 import type { APActivity, APCollection, APCollectionPage } from "./activitypub.js";
 import { inboundActivityToLink } from "./translate.js";
@@ -23,14 +23,15 @@ import * as store from "./store.js";
  */
 export async function fetchCollectionPage(url: string): Promise<APCollectionPage | null> {
     try {
-        const headers = JSON.stringify({
-            Accept: "application/activity+json",
-        });
-        const responseRaw = await httpFetch(url, "GET", headers, "");
-        const parsed = JSON.parse(responseRaw);
+        const response = await getTransport().fetch(
+            url,
+            "GET",
+            { Accept: "application/activity+json" },
+            "",
+        );
 
-        if (parsed.status >= 200 && parsed.status < 300) {
-            return JSON.parse(parsed.body) as APCollectionPage;
+        if (response.status >= 200 && response.status < 300) {
+            return JSON.parse(response.body) as APCollectionPage;
         }
         return null;
     } catch {
@@ -43,14 +44,15 @@ export async function fetchCollectionPage(url: string): Promise<APCollectionPage
  */
 export async function fetchOutboxMeta(outboxUrl: string): Promise<APCollection | null> {
     try {
-        const headers = JSON.stringify({
-            Accept: "application/activity+json",
-        });
-        const responseRaw = await httpFetch(outboxUrl, "GET", headers, "");
-        const parsed = JSON.parse(responseRaw);
+        const response = await getTransport().fetch(
+            outboxUrl,
+            "GET",
+            { Accept: "application/activity+json" },
+            "",
+        );
 
-        if (parsed.status >= 200 && parsed.status < 300) {
-            return JSON.parse(parsed.body) as APCollection;
+        if (response.status >= 200 && response.status < 300) {
+            return JSON.parse(response.body) as APCollection;
         }
         return null;
     } catch {

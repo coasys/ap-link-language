@@ -7,7 +7,8 @@
  * federation service can implement retry and shared-inbox optimization.
  */
 
-import { httpFetch, emitSignal } from "@coasys/ad4m-ldk";
+import { getRuntime } from "./runtime-interface.js";
+import { getTransport } from "./transport.js";
 import { signedHeaders } from "./http-signatures.js";
 import type { APActivity } from "./activitypub.js";
 
@@ -42,27 +43,17 @@ export async function deliverToInbox(
     const headers = signedHeaders(actorKeyId, inboxUrl, body);
 
     try {
-        const responseRaw = await httpFetch(
+        const response = await getTransport().fetch(
             inboxUrl,
             "POST",
-            JSON.stringify(headers),
+            headers,
             body,
         );
 
-        // httpFetch returns a JSON string with { status, headers, body }
-        let status = 0;
-        try {
-            const parsed = JSON.parse(responseRaw);
-            status = parsed.status || 0;
-        } catch {
-            // If parsing fails, treat as network error
-            return { targetUrl: inboxUrl, status: 0, ok: false, error: "Failed to parse httpFetch response" };
-        }
-
         return {
             targetUrl: inboxUrl,
-            status,
-            ok: status >= 200 && status < 300,
+            status: response.status,
+            ok: response.status >= 200 && response.status < 300,
         };
     } catch (err) {
         return {
@@ -84,7 +75,7 @@ export function emitDeliveryRequest(
     activity: APActivity,
     neighbourhoodHash: string,
 ): void {
-    emitSignal(JSON.stringify({
+    getRuntime().emitSignal(JSON.stringify({
         type: "ap-delivery-request",
         activity,
         neighbourhood: neighbourhoodHash,
