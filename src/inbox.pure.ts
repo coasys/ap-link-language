@@ -9,7 +9,7 @@
 import type { APActivity, APObject } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
 import type { LinkExpression, PerspectiveDiff } from "./types.js";
-import { inboundActivityToLink } from "./translate.js";
+import { inboundActivityToLink, inboundActivityToLinks } from "./translate.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,6 +67,9 @@ export function parseInboxSignal(signal: unknown): InboxSignal | null {
  * - Reject activities that don't match syncMode
  *
  * Pure function — no side effects, no storage access.
+ *
+ * When `groupActorUrl` is provided, uses enhanced inbound translation
+ * that extracts reply threads, mentions, and context associations.
  */
 export function routeInboundActivity(
     activity: APActivity,
@@ -74,6 +77,7 @@ export function routeInboundActivity(
     settings: APLanguageSettings,
     verified: boolean,
     authorDid?: string,
+    groupActorUrl?: string,
 ): InboxProcessResult {
     // Check syncMode: publish-only rejects all inbound content
     if (settings.syncMode === "publish-only") {
@@ -98,24 +102,31 @@ export function routeInboundActivity(
         case "Delete":
         case "Like":
         case "Announce": {
-            const link = inboundActivityToLink(activity, neighbourhoodUrl);
-            if (!link) {
+            // Use enhanced multi-link translation when group URL is available
+            const links = groupActorUrl
+                ? inboundActivityToLinks(activity, neighbourhoodUrl, groupActorUrl)
+                : (() => {
+                    const single = inboundActivityToLink(activity, neighbourhoodUrl);
+                    return single ? [single] : [];
+                })();
+
+            if (links.length === 0) {
                 return { kind: "ignored", reason: `Could not translate ${activity.type} activity to link` };
             }
 
-            // Override author with resolved DID if available
-            if (authorDid) {
-                link.author = authorDid;
-            }
-
-            // Mark non-AD4M or unverified links
-            if (!verified || !authorDid?.startsWith("did:")) {
-                link.status = "unverified";
+            // Apply author override and verification status to all links
+            for (const link of links) {
+                if (authorDid) {
+                    link.author = authorDid;
+                }
+                if (!verified || !authorDid?.startsWith("did:")) {
+                    link.status = "unverified";
+                }
             }
 
             const diff: PerspectiveDiff = activity.type === "Delete"
-                ? { additions: [], removals: [link] }
-                : { additions: [link], removals: [] };
+                ? { additions: [], removals: links }
+                : { additions: links, removals: [] };
 
             return { kind: "link-diff", diff };
         }

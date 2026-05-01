@@ -15,6 +15,8 @@ import type { LinkExpression, PerspectiveDiff } from "./types.js";
 import type { APActivity, APObject, APLinkTag, APTag } from "./activitypub.js";
 import { apContext } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
+import type { DetectedPattern } from "./sdna.js";
+import { detectPattern } from "./sdna.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,6 +31,22 @@ function escapeHtml(s: string): string {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+}
+
+/**
+ * Build an ad4m:Link tag from a LinkExpression.
+ */
+function buildAd4mTag(link: LinkExpression): APLinkTag {
+    const tag: APLinkTag = {
+        type: "ad4m:Link",
+        "ad4m:source": link.data.source || "",
+        "ad4m:predicate": link.data.predicate || "",
+        "ad4m:target": link.data.target || "",
+    };
+    if (link.proof?.signature) {
+        tag["ad4m:proof"] = link.proof.signature;
+    }
+    return tag;
 }
 
 /**
@@ -83,6 +101,8 @@ export interface LinkToActivityOptions {
     settings: APLanguageSettings;
     /** Optional resolved content for chat-style links */
     resolvedContent?: string;
+    /** Optional hash function (needed by linkToRichActivity for reactions) */
+    hashFn?: (data: string) => string;
 }
 
 /**
@@ -215,35 +235,87 @@ export interface DiffToActivitiesOptions {
     hashFn: (data: string) => string;
     /** Optional map of expression URIs → resolved content */
     resolvedContent?: Map<string, string>;
+    /** Optional map of parent URIs → AP object URLs (for reply threading) */
+    parentApObjectUrls?: Map<string, string>;
+    /** Optional map of mentioned agent URIs → { actorUrl, handle } */
+    mentionActors?: Map<string, { actorUrl: string; handle: string }>;
+    /** Optional filter: skip links that should not be federated */
+    shouldFederate?: (linkHash: string) => boolean;
 }
 
 /**
  * Convert an entire PerspectiveDiff into AP activities.
+ *
+ * Uses SDNA pattern detection for rich rendering when patterns are
+ * recognized, falling back to standard linkToActivity() for unknown
+ * patterns.
  */
 export function diffToActivities(
     diff: PerspectiveDiff,
     opts: DiffToActivitiesOptions,
 ): APActivity[] {
     const activities: APActivity[] = [];
+    const chatPredicates = opts.settings.rendering.chatPredicates;
 
     for (const addition of diff.additions) {
         const linkHash = opts.hashFn(linkContentKey(addition));
+
+        // Check federation filter
+        if (opts.shouldFederate && !opts.shouldFederate(linkHash)) {
+            continue;
+        }
+
         const target = addition.data.target || "";
         const resolved = opts.resolvedContent?.get(target);
 
-        activities.push(
-            linkToActivity(addition, {
-                groupActorUrl: opts.groupActorUrl,
-                actorUrl: opts.actorUrl,
-                linkHash,
-                settings: opts.settings,
-                resolvedContent: resolved,
-            }),
-        );
+        // Detect SDNA pattern
+        const pattern = detectPattern(addition, chatPredicates);
+
+        if (pattern.type !== "unknown" && pattern.type !== "content") {
+            // Use rich rendering for recognized patterns
+            const parentApObjectUrl = addition.data.source
+                ? opts.parentApObjectUrls?.get(addition.data.source)
+                : undefined;
+
+            const mentionInfo = pattern.type === "mention" && pattern.mentionedAgent
+                ? opts.mentionActors?.get(pattern.mentionedAgent)
+                : undefined;
+
+            activities.push(
+                linkToRichActivity(addition, pattern, {
+                    groupActorUrl: opts.groupActorUrl,
+                    actorUrl: opts.actorUrl,
+                    linkHash,
+                    settings: opts.settings,
+                    resolvedContent: resolved,
+                    parentApObjectUrl,
+                    mentionActorUrl: mentionInfo?.actorUrl,
+                    mentionHandle: mentionInfo?.handle,
+                    hashFn: opts.hashFn,
+                }),
+            );
+        } else {
+            // Standard rendering for unknown/content patterns
+            activities.push(
+                linkToActivity(addition, {
+                    groupActorUrl: opts.groupActorUrl,
+                    actorUrl: opts.actorUrl,
+                    linkHash,
+                    settings: opts.settings,
+                    resolvedContent: resolved,
+                }),
+            );
+        }
     }
 
     for (const removal of diff.removals) {
         const linkHash = opts.hashFn(linkContentKey(removal));
+
+        // Check federation filter for removals too
+        if (opts.shouldFederate && !opts.shouldFederate(linkHash)) {
+            continue;
+        }
+
         activities.push(
             removalToActivity(removal, {
                 groupActorUrl: opts.groupActorUrl,
@@ -397,8 +469,101 @@ export function announceActivityToLink(
 }
 
 /**
+ * Generic inbound activity → LinkExpression(s) dispatcher.
+ * Routes to the appropriate handler based on activity type.
+ *
+ * Returns an array of LinkExpressions — a single inbound activity
+ * can produce multiple links (e.g. a Note with inReplyTo produces
+ * both the content link and a reply link).
+ */
+export function inboundActivityToLinks(
+    activity: APActivity,
+    neighbourhoodUrl: string,
+    groupActorUrl?: string,
+): LinkExpression[] {
+    const links: LinkExpression[] = [];
+
+    switch (activity.type) {
+        case "Create": {
+            const primaryLink = activityToLink(activity, neighbourhoodUrl);
+            if (primaryLink) links.push(primaryLink);
+
+            const obj = activity.object;
+            if (typeof obj !== "string" && (obj.type === "Note" || obj.type === "Article")) {
+                const note = obj as APObject;
+                const published = activity.published || new Date().toISOString();
+                const author = `ap:${activity.actor}`;
+
+                // inReplyTo → flux://has_reply link
+                if (note.inReplyTo && typeof note.inReplyTo === "string") {
+                    links.push({
+                        author,
+                        timestamp: published,
+                        data: {
+                            source: note.inReplyTo,
+                            target: note.id,
+                            predicate: "flux://has_reply",
+                        },
+                        proof: { signature: "", key: "" },
+                    });
+                }
+
+                // Mention tags → mention links
+                if (note.tag && Array.isArray(note.tag)) {
+                    for (const tag of note.tag) {
+                        if (tag.type === "Mention" && typeof tag.href === "string") {
+                            links.push({
+                                author,
+                                timestamp: published,
+                                data: {
+                                    source: note.id,
+                                    target: tag.href as string,
+                                    predicate: "flux://has_mention",
+                                },
+                                proof: { signature: "", key: "" },
+                            });
+                        }
+                    }
+                }
+
+                // Thread context → associate with channel
+                if (groupActorUrl && note.context === groupActorUrl && primaryLink) {
+                    // The primary link already has the neighbourhood as source
+                    // when it's a synthetic link. For context-aware routing,
+                    // we mark it via the existing source field.
+                }
+            }
+            break;
+        }
+
+        case "Delete": {
+            const removal = deleteActivityToRemoval(activity, neighbourhoodUrl);
+            if (removal) links.push(removal);
+            break;
+        }
+
+        case "Like": {
+            const like = likeActivityToLink(activity);
+            if (like) links.push(like);
+            break;
+        }
+
+        case "Announce": {
+            const announce = announceActivityToLink(activity);
+            if (announce) links.push(announce);
+            break;
+        }
+    }
+
+    return links;
+}
+
+/**
  * Generic inbound activity → LinkExpression dispatcher.
  * Routes to the appropriate handler based on activity type.
+ *
+ * Returns the primary link only (for backward compatibility).
+ * Use `inboundActivityToLinks()` for full multi-link translation.
  */
 export function inboundActivityToLink(
     activity: APActivity,
@@ -415,5 +580,173 @@ export function inboundActivityToLink(
             return announceActivityToLink(activity);
         default:
             return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rich Activity Translation (Outbound — Pattern-Aware)
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate a LinkExpression into an AP Activity using SDNA pattern
+ * detection for smart rendering.
+ *
+ * For chat-message patterns:
+ *   - Content = resolved Expression content (not the URI)
+ *   - context = group actor URL (conversation context)
+ *
+ * For reply patterns:
+ *   - Content = resolved Expression content
+ *   - inReplyTo = translated parent URI → AP object URL
+ *
+ * For mention patterns:
+ *   - Adds AP Mention tags with href and name
+ *
+ * For reaction patterns:
+ *   - Uses AP Like activity type instead of Create{Note}
+ *
+ * Falls back to linkToActivity() for unknown/content patterns.
+ */
+export function linkToRichActivity(
+    link: LinkExpression,
+    pattern: DetectedPattern,
+    opts: LinkToActivityOptions & {
+        resolvedContent?: string;
+        /** For replies: the AP object URL of the parent */
+        parentApObjectUrl?: string;
+        /** For mentions: resolved actor URL and handle */
+        mentionActorUrl?: string;
+        mentionHandle?: string;
+    },
+): APActivity {
+    const { groupActorUrl, actorUrl, linkHash, settings } = opts;
+    const published = toISO(link.timestamp);
+
+    switch (pattern.type) {
+        case "chat-message": {
+            const content = opts.resolvedContent || escapeHtml(link.data.target || "");
+            const tags: APTag[] = [];
+
+            // Include ad4m:Link tag for round-trip fidelity
+            if (settings.rendering.includeAd4mTags) {
+                tags.push(buildAd4mTag(link));
+            }
+
+            const noteObject: APObject = {
+                type: "Note",
+                id: objectId(groupActorUrl, linkHash),
+                attributedTo: actorUrl,
+                content,
+                published,
+                context: groupActorUrl,
+                ...(tags.length > 0 ? { tag: tags } : {}),
+            };
+
+            return {
+                "@context": apContext(),
+                type: "Create",
+                id: activityId(groupActorUrl, linkHash),
+                actor: actorUrl,
+                published,
+                to: [`${groupActorUrl}/followers`],
+                object: noteObject,
+            };
+        }
+
+        case "reply": {
+            const content = opts.resolvedContent || escapeHtml(link.data.target || "");
+            const tags: APTag[] = [];
+
+            if (settings.rendering.includeAd4mTags) {
+                tags.push(buildAd4mTag(link));
+            }
+
+            const noteObject: APObject = {
+                type: "Note",
+                id: objectId(groupActorUrl, linkHash),
+                attributedTo: actorUrl,
+                content,
+                published,
+                context: groupActorUrl,
+                ...(opts.parentApObjectUrl
+                    ? { inReplyTo: opts.parentApObjectUrl }
+                    : {}),
+                ...(tags.length > 0 ? { tag: tags } : {}),
+            };
+
+            return {
+                "@context": apContext(),
+                type: "Create",
+                id: activityId(groupActorUrl, linkHash),
+                actor: actorUrl,
+                published,
+                to: [`${groupActorUrl}/followers`],
+                object: noteObject,
+            };
+        }
+
+        case "mention": {
+            const content = opts.resolvedContent || escapeHtml(link.data.target || "");
+            const tags: APTag[] = [];
+
+            if (settings.rendering.includeAd4mTags) {
+                tags.push(buildAd4mTag(link));
+            }
+
+            // Add Mention tag
+            if (opts.mentionActorUrl) {
+                tags.push({
+                    type: "Mention",
+                    href: opts.mentionActorUrl,
+                    name: opts.mentionHandle || `@${opts.mentionActorUrl}`,
+                });
+            }
+
+            const noteObject: APObject = {
+                type: "Note",
+                id: objectId(groupActorUrl, linkHash),
+                attributedTo: actorUrl,
+                content,
+                published,
+                context: groupActorUrl,
+                ...(tags.length > 0 ? { tag: tags } : {}),
+            };
+
+            return {
+                "@context": apContext(),
+                type: "Create",
+                id: activityId(groupActorUrl, linkHash),
+                actor: actorUrl,
+                published,
+                to: [`${groupActorUrl}/followers`],
+                object: noteObject,
+            };
+        }
+
+        case "reaction": {
+            // Reactions use AP Like activity type
+            const objectUrl = pattern.contentUri
+                ? objectId(groupActorUrl, opts.hashFn
+                    ? opts.hashFn(pattern.contentUri)
+                    : pattern.contentUri)
+                : objectId(groupActorUrl, linkHash);
+
+            return {
+                "@context": apContext(),
+                type: "Like",
+                id: activityId(groupActorUrl, linkHash),
+                actor: actorUrl,
+                published,
+                to: [`${groupActorUrl}/followers`],
+                object: {
+                    type: "Note",
+                    id: objectUrl,
+                },
+            };
+        }
+
+        // "content" and "unknown" — fall through to standard rendering
+        default:
+            return linkToActivity(link, opts);
     }
 }

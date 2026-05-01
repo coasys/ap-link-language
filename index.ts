@@ -19,12 +19,16 @@ import {
     hash,
     languageSettings,
     emitPerspectiveDiff,
+    storageGet,
+    storagePut,
 } from "@coasys/ad4m-ldk";
 
 import type { PerspectiveDiff, LinkExpression } from "./src/types.js";
 import { parseSettings } from "./src/settings.js";
 import type { APLanguageSettings } from "./src/settings.js";
 import { diffToActivities, linkContentKey } from "./src/translate.js";
+import { shouldFederate, linkOriginKey, linkContentHash } from "./src/dual-language.js";
+import type { LinkOrigin } from "./src/dual-language.js";
 import * as store from "./src/store.js";
 import { deliverToFollowers } from "./src/delivery.js";
 import { syncFromOutbox } from "./src/sync.js";
@@ -126,15 +130,34 @@ const language = defineLanguage({
                 return "";
             }
 
-            // 3. Translate to AP activities
+            // 3. Build federation filter using dual-language origin tracking
+            const federationFilter = (linkHash: string): boolean => {
+                return shouldFederate(linkHash, (key) => storageGet(key));
+            };
+
+            // 4. Track origins for new native commits
+            for (const link of diff.additions) {
+                const h = store.hashLink(link);
+                const originKey = linkOriginKey(h);
+                const existing = storageGet(originKey);
+                if (existing === "ap") {
+                    // Arrived via AP, now also committed natively — mark as dual
+                    storagePut(originKey, "dual");
+                } else if (!existing) {
+                    storagePut(originKey, "native");
+                }
+            }
+
+            // 5. Translate to AP activities (with SDNA pattern detection + federation filter)
             const activities = diffToActivities(diff, {
                 groupActorUrl: GROUP_ACTOR_URL,
                 actorUrl: agentActorUrl(),
                 settings,
                 hashFn: hash,
+                shouldFederate: federationFilter,
             });
 
-            // 4. Deliver to followers (fire-and-forget + signal emission)
+            // 6. Deliver to followers (fire-and-forget + signal emission)
             const inboxes = followerInboxes();
             if (inboxes.length > 0 && activities.length > 0) {
                 for (const activity of activities) {
@@ -153,7 +176,7 @@ const language = defineLanguage({
                 }
             }
 
-            // 5. Emit the perspective diff for local subscribers
+            // 7. Emit the perspective diff for local subscribers
             emitPerspectiveDiff(diff);
 
             return "";
