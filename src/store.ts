@@ -141,26 +141,26 @@ export function queryLinks(query: LinkQuery): LinkExpression[] {
 
     if (source) {
         const keys = storageListKeys(`links-by-source/${source}/`);
-        candidateHashes = keys.map((k) => {
+        candidateHashes = keys.map((k: string) => {
             const raw = storageGet(k);
             return raw || "";
         }).filter(Boolean);
     } else if (target) {
         const keys = storageListKeys(`links-by-target/${target}/`);
-        candidateHashes = keys.map((k) => {
+        candidateHashes = keys.map((k: string) => {
             const raw = storageGet(k);
             return raw || "";
         }).filter(Boolean);
     } else if (predicate) {
         const keys = storageListKeys(`links-by-pred/${predicate}/`);
-        candidateHashes = keys.map((k) => {
+        candidateHashes = keys.map((k: string) => {
             const raw = storageGet(k);
             return raw || "";
         }).filter(Boolean);
     } else {
         // Full scan
         const keys = storageListKeys("links/");
-        candidateHashes = keys.map((k) => k.replace("links/", ""));
+        candidateHashes = keys.map((k: string) => k.replace("links/", ""));
     }
 
     // Fetch and filter
@@ -244,7 +244,7 @@ export function removePeer(did: string): void {
 
 export function listPeers(prefix: string = "peers/"): string[] {
     const keys = storageListKeys(prefix);
-    return keys.map((k) => k.replace(prefix, ""));
+    return keys.map((k: string) => k.replace(prefix, ""));
 }
 
 export function getPeerMetadata(did: string): Record<string, unknown> | null {

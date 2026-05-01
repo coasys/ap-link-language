@@ -12,7 +12,7 @@
   "author": "Coasys AG",
   "license": "CAL-1.0",
   "dependencies": {
-    "@coasys/ad4m-ldk": "workspace:*"
+    "@coasys/ad4m-ldk": "link:../ad4m/ad4m-ldk/js"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
