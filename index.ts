@@ -5,8 +5,9 @@
  * Implements perspective-commit, perspective-sync, perspective-query,
  * and peers capabilities.
  *
- * Phase 1: outbound-only MVP — publishes links as AP Create{Note}
- * activities, maintains a local link store, and provides query access.
+ * Phase 2: bidirectional federation — publishes links as AP activities,
+ * processes inbound activities from the group inbox, handles Follow/
+ * Accept/Undo handshake, and polls remote outboxes.
  *
  * Spec: activitypub-link-language.md
  */
@@ -28,6 +29,8 @@ import * as store from "./src/store.js";
 import { deliverToFollowers } from "./src/delivery.js";
 import { syncFromOutbox } from "./src/sync.js";
 import { buildGroupActor } from "./src/activitypub.js";
+import { processInboxSignal } from "./src/inbox.js";
+import { getFollowerInboxes } from "./src/security.js";
 
 // ---------------------------------------------------------------------------
 // Template Variables (per Spec §6)
@@ -73,19 +76,10 @@ function neighbourhoodUrl(): string {
 }
 
 /**
- * Read follower inbox URLs from the peer store.
- * Phase 1: manually managed via peersSetLocal.
+ * Read follower inbox URLs from the security module's follower store.
  */
 function followerInboxes(): string[] {
-    const peerDids = store.listPeers("peers/");
-    const inboxes: string[] = [];
-    for (const did of peerDids) {
-        const meta = store.getPeerMetadata(did);
-        if (meta?.inbox && typeof meta.inbox === "string") {
-            inboxes.push(meta.inbox);
-        }
-    }
-    return inboxes;
+    return getFollowerInboxes();
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +88,7 @@ function followerInboxes(): string[] {
 
 const language = defineLanguage({
     name: "@coasys/ap-link-language",
-    version: "0.1.0",
+    version: "0.2.0",
 
     isPublic: true,
 
@@ -106,6 +100,7 @@ const language = defineLanguage({
         console.log(`[ap-link-language] init: did=${myDid}, domain=${FEDERATION_DOMAIN}`);
         console.log(`[ap-link-language] group actor: ${GROUP_ACTOR_URL}`);
         console.log(`[ap-link-language] sync mode: ${settings.syncMode}`);
+        console.log(`[ap-link-language] membership: ${settings.membership}`);
     },
 
     async teardown() {
@@ -125,7 +120,13 @@ const language = defineLanguage({
             // 1. Store links locally
             store.applyDiff(diff);
 
-            // 2. Translate to AP activities
+            // 2. Skip outbound delivery in subscribe-only mode
+            if (settings.syncMode === "subscribe-only") {
+                emitPerspectiveDiff(diff);
+                return "";
+            }
+
+            // 3. Translate to AP activities
             const activities = diffToActivities(diff, {
                 groupActorUrl: GROUP_ACTOR_URL,
                 actorUrl: agentActorUrl(),
@@ -133,7 +134,7 @@ const language = defineLanguage({
                 hashFn: hash,
             });
 
-            // 3. Deliver to followers (fire-and-forget + signal emission)
+            // 4. Deliver to followers (fire-and-forget + signal emission)
             const inboxes = followerInboxes();
             if (inboxes.length > 0 && activities.length > 0) {
                 for (const activity of activities) {
@@ -152,7 +153,7 @@ const language = defineLanguage({
                 }
             }
 
-            // 4. Emit the perspective diff for local subscribers
+            // 5. Emit the perspective diff for local subscribers
             emitPerspectiveDiff(diff);
 
             return "";
@@ -164,8 +165,10 @@ const language = defineLanguage({
     // -----------------------------------------------------------------------
     sync: {
         async sync() {
-            // Phase 1: outbound-only — sync is a no-op for remote fetching.
-            // The infrastructure for Phase 2 outbox polling is in sync.ts.
+            // Skip outbox sync in publish-only mode
+            if (settings.syncMode === "publish-only") {
+                return { additions: [], removals: [] };
+            }
             return await syncFromOutbox(GROUP_OUTBOX_URL, neighbourhoodUrl());
         },
 
@@ -258,4 +261,41 @@ export function linkSyncRemoveCallback(callback: (diff: PerspectiveDiff) => void
 export function linkSyncAddSyncStateChangeCallback(callback: (state: string) => void): number {
     syncStateChangeCallback = callback;
     return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Signal-based inbox handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle signals emitted by the executor.
+ *
+ * The executor forwards inbound AP inbox POSTs as signals to the language.
+ * This handler processes them through the inbox pipeline:
+ * activity parsing → actor resolution → security checks → link storage.
+ */
+export async function handleSignal(signalData: string): Promise<void> {
+    let signal: unknown;
+    try {
+        signal = JSON.parse(signalData);
+    } catch {
+        return; // Not JSON — not our signal
+    }
+
+    const result = await processInboxSignal(
+        signal,
+        neighbourhoodUrl(),
+        GROUP_ACTOR_URL,
+        actorKeyId,
+        settings,
+    );
+
+    // Notify the link callback if we produced a diff
+    if (result.kind === "link-diff" && linkCallback) {
+        linkCallback(result.diff);
+    }
+
+    if (result.kind === "rejected" || result.kind === "ignored") {
+        console.log(`[ap-link-language] signal ${result.kind}: ${result.reason}`);
+    }
 }

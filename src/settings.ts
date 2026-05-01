@@ -22,14 +22,25 @@ export interface RenderingSettings {
 
 export type SyncMode = "bidirectional" | "publish-only" | "subscribe-only";
 
+export type MembershipMode = "open" | "followers-only" | "members-only" | "admin-approved";
+
+export interface RateLimitSettings {
+    /** Maximum requests per minute per actor */
+    maxPerMinute: number;
+}
+
 export interface APLanguageSettings {
     rendering: RenderingSettings;
     syncMode: SyncMode;
     allowExternalAuthors: boolean;
     requireApproval: boolean;
+    /** Membership mode per Spec §14.1 */
+    membership: MembershipMode;
+    /** Rate limiting per actor */
+    rateLimit: RateLimitSettings;
 }
 
-/** Default settings — Phase 1 outbound-only with sensible defaults. */
+/** Default settings — sensible defaults for bidirectional federation. */
 export const DEFAULT_SETTINGS: APLanguageSettings = {
     rendering: {
         strategy: "auto",
@@ -40,6 +51,8 @@ export const DEFAULT_SETTINGS: APLanguageSettings = {
     syncMode: "bidirectional",
     allowExternalAuthors: true,
     requireApproval: false,
+    membership: "followers-only",
+    rateLimit: { maxPerMinute: 30 },
 };
 
 /**
@@ -75,6 +88,16 @@ export function parseSettings(raw: string | null | undefined): APLanguageSetting
                 typeof parsed?.requireApproval === "boolean"
                     ? parsed.requireApproval
                     : DEFAULT_SETTINGS.requireApproval,
+            membership:
+                ["open", "followers-only", "members-only", "admin-approved"].includes(parsed?.membership)
+                    ? parsed.membership
+                    : DEFAULT_SETTINGS.membership,
+            rateLimit: {
+                maxPerMinute:
+                    typeof parsed?.rateLimit?.maxPerMinute === "number" && parsed.rateLimit.maxPerMinute > 0
+                        ? parsed.rateLimit.maxPerMinute
+                        : DEFAULT_SETTINGS.rateLimit.maxPerMinute,
+            },
         };
     } catch {
         return { ...DEFAULT_SETTINGS };
