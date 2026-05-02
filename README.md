@@ -8,27 +8,27 @@ This language implements `perspective-commit`, `perspective-sync`, `perspective-
 
 ## Features
 
-### Phase 1: Outbound Publishing
+### Federation
 - Links committed to the perspective are translated to AP `Create{Note}` activities and delivered to follower inboxes
-- Local KV-backed link store with indexes by source, target, and predicate
-- Template-driven AP Group Actor for the neighbourhood
-- HTTP Signatures using the agent's DID keypair
-- Three rendering strategies: "semantic" (structured), "chat" (plain text), "raw" (triple)
-
-### Phase 2: Bidirectional Federation
 - Inbox processing — inbound AP activities become local links
 - Follow/Accept/Undo handshake for the group actor
 - Actor resolution with DID extraction and cache TTL
 - Outbox sync with pagination for catching up missed activities
 - Membership control (open, followers-only, allowlist) and rate limiting
+- HTTP Signatures using the agent's DID keypair
+- Template-driven AP Group Actor for the neighbourhood
 
-### Phase 3: Chat Rendering & Dual-Language Support
+### Chat & Social
 - SDNA-aware pattern detection (chat messages, replies, reactions, mentions)
 - Rich AP rendering — Notes with `inReplyTo`, `Mention` tags, `Like` activities
+- Three rendering strategies: "semantic" (structured), "chat" (plain text), "raw" (triple)
+
+### Storage & Architecture
+- Local KV-backed link store with indexes by source, target, and predicate
 - Dual-language architecture for coexisting with a primary p-diff-sync language
 - Link origin tracking to prevent federation echo loops
 
-### Phase 4: WASM Port Preparation
+### Cross-Runtime Portability
 - Transport abstraction layer (`Transport` interface) — all HTTP goes through `getTransport()`
 - Storage adapter interface (`StorageAdapter`) — all KV goes through `getStorage()`
 - Signing adapter interface (`SigningAdapter`) — all cryptographic signing via `getSigning()`
@@ -65,7 +65,7 @@ This language implements `perspective-commit`, `perspective-sync`, `perspective-
 │  │  inbox.ts        — inbound activity processing               │  │
 │  │  sdna.ts         — SDNA pattern detection                    │  │
 │  │  dual-language.ts — federation filter + origin tracking      │  │
-│  │  *.pure.ts       — pure functional logic (Phase 2/3)         │  │
+│  │  *.pure.ts       — pure functional logic                     │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                          ↕ injected adapters                      │
 │  ┌─────────────────────────────────────────────────────────────┐  │

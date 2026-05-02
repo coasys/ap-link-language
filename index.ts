@@ -5,9 +5,9 @@
  * Implements perspective-commit, perspective-sync, perspective-query,
  * and peers capabilities.
  *
- * Phase 2: bidirectional federation — publishes links as AP activities,
- * processes inbound activities from the group inbox, handles Follow/
- * Accept/Undo handshake, and polls remote outboxes.
+ * Publishes links as AP activities, processes inbound activities from
+ * the group inbox, handles Follow/Accept/Undo handshake, and polls
+ * remote outboxes.
  *
  * Spec: activitypub-link-language.md
  */
@@ -34,7 +34,7 @@ import { buildGroupActor } from "./src/activitypub.js";
 import { processInboxSignal } from "./src/inbox.js";
 import { getFollowerInboxes } from "./src/security.js";
 
-// Phase 4: Adapter imports (interfaces for singletons, Deno impls for init)
+// Adapter imports (interfaces for singletons, Deno impls for init)
 import { initTransport } from "./src/transport.js";
 import { DenoTransport } from "./src/transport-deno.js";
 import { initStorage, getStorage } from "./src/storage-interface.js";
@@ -105,7 +105,7 @@ const language = defineLanguage({
     isPublic: true,
 
     async init() {
-        // Phase 4: Initialize adapters before anything else
+        // Initialize adapters before anything else
         initRuntime(new DenoRuntime());
         initStorage(new DenoStorageAdapter());
         initTransport(new DenoTransport());
@@ -280,7 +280,7 @@ export const {
 export default language;
 
 // ---------------------------------------------------------------------------
-// Phase 0 transitional: callback registration
+// Callback registration
 // Mirrors centralized-p-diff-sync for runtime compatibility.
 // ---------------------------------------------------------------------------
 
@@ -303,7 +303,7 @@ export function linkSyncAddSyncStateChangeCallback(callback: (state: string) => 
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Signal-based inbox handler
+// Signal-based inbox handler
 // ---------------------------------------------------------------------------
 
 /**

@@ -2,7 +2,7 @@
  * Settings for the AP Link Language.
  *
  * Parsed from the JSON string returned by `languageSettings()` at
- * runtime. Provides sensible defaults for Phase 1 (outbound-only).
+ * runtime. Provides sensible defaults.
  *
  * Spec §4.4 + §9.
  */

@@ -1,5 +1,5 @@
 /**
- * Cross-runtime test harness — Phase 4.
+ * Cross-runtime test harness.
  *
  * Exercises the full production modules (store, delivery, sync, actors,
  * follow, security, inbox, http-signatures) using mock adapters that

@@ -3,8 +3,6 @@
  *
  * No ad4m:host imports. Safe for cross-runtime testing.
  * Deno-specific implementations are in runtime-deno.ts.
- *
- * Phase 4: WASM port preparation.
  */
 
 // ---------------------------------------------------------------------------

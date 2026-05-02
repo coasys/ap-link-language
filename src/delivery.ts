@@ -1,7 +1,7 @@
 /**
  * AP HTTP delivery — outbound activity delivery via httpFetch.
  *
- * Phase 1 delivers to known follower inboxes using HTTP POST with
+ * Delivers to known follower inboxes using HTTP POST with
  * HTTP Signatures. Delivery is fire-and-forget from the language's
  * perspective — the language also emits signals so the executor's
  * federation service can implement retry and shared-inbox optimization.

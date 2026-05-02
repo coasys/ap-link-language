@@ -1,7 +1,6 @@
 /**
  * Sync logic — outbox fetching and remote state reconciliation.
  *
- * Phase 2: full bidirectional sync.
  * - Fetches outbox collection pages via httpFetch
  * - Paginates through new activities since last revision
  * - Translates activities to links and applies to store
