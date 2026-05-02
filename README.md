@@ -182,7 +182,7 @@ pnpm run typecheck
 # Bundle for the AD4M executor
 deno run --allow-all esbuild.ts
 
-# Run tests (197 tests across 5 test files)
+# Run tests (197 tests across 8 test files)
 pnpm run test
 ```
 
