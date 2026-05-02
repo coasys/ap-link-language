@@ -135,10 +135,6 @@ The test suite includes:
 
 The cross-runtime tests prove the core logic has zero hidden dependency on `ad4m:host` — every external call goes through the injected adapters.
 
-## Spec
-
-See the [full proposal](../../.openclaw/workspace/membranes/adam/proposals/activitypub-link-language.md) for design rationale, security model, and federation semantics.
-
 ## License
 
 CAL-1.0 — same as AD4M.
