@@ -107,6 +107,72 @@ To port to a new runtime: implement the four interfaces and wire them in your en
 | `FEDERATION_DOMAIN` | Domain for AP federation |
 | `NEIGHBOURHOOD_META` | JSON-encoded Neighbourhood metadata |
 
+## File Structure
+
+```
+ap-link-language/
+├── package.json
+├── tsconfig.json
+├── esbuild.ts
+├── README.md
+├── index.ts                        # Entry point (Deno runtime wiring)
+├── wit/
+│   └── http-ext.wit                # WIT definition for WASM HTTP extension
+├── src/
+│   ├── types.ts                    # Local type definitions (pure)
+│   ├── activitypub.ts              # AP types + JSON-LD (pure)
+│   ├── settings.ts                 # Settings parsing (pure)
+│   ├── translate.ts                # Link ↔ Activity translation (pure)
+│   ├── sdna.ts                     # SDNA pattern detection (pure)
+│   ├── dual-language.ts            # Dual-language dedup (pure)
+│   │
+│   ├── transport.ts                # Transport interface + WasmTransport + singleton
+│   ├── storage-interface.ts        # StorageAdapter interface + singleton
+│   ├── signing-interface.ts        # SigningAdapter interface + singleton
+│   ├── runtime-interface.ts        # RuntimeAdapter interface + singleton
+│   │
+│   ├── transport-deno.ts           # DenoTransport (ad4m:host httpFetch)
+│   ├── storage-deno.ts             # DenoStorageAdapter (ad4m:host KV)
+│   ├── signing-deno.ts             # DenoSigningAdapter (ad4m:host sign)
+│   ├── runtime-deno.ts             # DenoRuntime (ad4m:host hash/emit)
+│   │
+│   ├── store.ts                    # Link store (uses StorageAdapter + RuntimeAdapter)
+│   ├── delivery.ts                 # Outbound delivery (uses Transport + RuntimeAdapter)
+│   ├── sync.ts                     # Outbox sync (uses Transport)
+│   ├── http-signatures.ts          # HTTP Signatures (uses SigningAdapter)
+│   ├── actors.ts                   # Actor resolution (uses Transport + StorageAdapter)
+│   ├── follow.ts                   # Follow/Accept (uses Transport + StorageAdapter)
+│   ├── security.ts                 # Security (uses StorageAdapter + RuntimeAdapter)
+│   ├── inbox.ts                    # Inbox processing (uses RuntimeAdapter + StorageAdapter)
+│   │
+│   ├── actors.pure.ts              # Pure actor logic
+│   ├── follow.pure.ts              # Pure follow logic
+│   ├── inbox.pure.ts               # Pure inbox logic
+│   └── security.pure.ts            # Pure security logic
+├── tests/
+│   ├── translate.test.ts           # Translation tests (pure)
+│   ├── inbox.test.ts               # Inbox tests (pure)
+│   ├── follow.test.ts              # Follow tests (pure)
+│   ├── actors.test.ts              # Actor tests (pure)
+│   ├── security.test.ts            # Security tests (pure)
+│   ├── sdna.test.ts                # SDNA tests (pure)
+│   ├── dual-language.test.ts       # Dual-language tests (pure)
+│   └── cross-runtime.test.ts       # Cross-runtime tests (mock adapters)
+└── build/
+    └── bundle.js                   # esbuild output
+```
+
+### `ad4m:host` Import Boundary
+
+`ad4m:host` imports appear **only** in:
+- `src/transport-deno.ts` — `httpFetch`
+- `src/storage-deno.ts` — `storageGet`, `storagePut`, `storageDelete`, `storageListKeys`
+- `src/signing-deno.ts` — `agentSignStringHex`, `agentSigningKeyId`
+- `src/runtime-deno.ts` — `hash`, `emitSignal`, `emitPerspectiveDiff`
+- `index.ts` — `defineLanguage`, `agentDid`, `languageSettings`, `hash`, `emitPerspectiveDiff`
+
+All other source files are runtime-agnostic.
+
 ## Building
 
 ```bash
