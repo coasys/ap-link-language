@@ -11,9 +11,9 @@ import assert from "node:assert/strict";
 import {
     checkMembership,
     checkRateLimitPure,
-} from "../src/security.pure.js";
+} from "../src/security.js";
 
-import type { RateLimitState } from "../src/security.pure.js";
+import type { RateLimitState } from "../src/security.js";
 import type { RateLimitSettings } from "../src/settings.js";
 
 // ---------------------------------------------------------------------------

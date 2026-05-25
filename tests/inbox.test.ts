@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import {
     parseInboxSignal,
     routeInboundActivity,
-} from "../src/inbox.pure.js";
+} from "../src/inbox.js";
 
 import type { APActivity, APObject, APLinkTag } from "../src/activitypub.js";
 import type { APLanguageSettings } from "../src/settings.js";

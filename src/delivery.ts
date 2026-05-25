@@ -7,8 +7,7 @@
  * federation service can implement retry and shared-inbox optimization.
  */
 
-import { getRuntime } from "./runtime-interface.js";
-import { getTransport } from "./transport.js";
+import { getRuntime, getTransport } from "./adapters.js";
 import { signedHeaders } from "./http-signatures.js";
 import type { APActivity } from "./activitypub.js";
 

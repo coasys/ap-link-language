@@ -2,21 +2,86 @@
  * Actor resolution and cache — runtime wrapper.
  *
  * Uses injected StorageAdapter for caching and Transport for retrieval.
- * Delegates pure logic to actors.pure.ts.
+ *
+ * Also includes: Pure actor resolution logic (was actors.pure.ts).
  *
  * Spec §2.4.
  */
 
-import { getRuntime } from "./runtime-interface.js";
-import { getStorage } from "./storage-interface.js";
-import { getTransport } from "./transport.js";
+import { getRuntime } from "./adapters.js";
+import { getStorage } from "./adapters.js";
+import { getTransport } from "./adapters.js";
 
-import type { ActorInfo } from "./actors.pure.js";
-import {
-    parseActorDocument,
-    resolveAuthorFromActor,
-    isActorCacheExpired,
-} from "./actors.pure.js";
+// ---------------------------------------------------------------------------
+// Pure actor types and functions (was actors.pure.ts)
+// ---------------------------------------------------------------------------
+
+export interface ActorPublicKey {
+    id: string;
+    owner: string;
+    publicKeyPem: string;
+}
+
+export interface ActorInfo {
+    id: string;
+    type: string;
+    inbox: string;
+    outbox?: string;
+    preferredUsername?: string;
+    name?: string;
+    "ad4m:did"?: string;
+    publicKey?: ActorPublicKey;
+    fetchedAt: number;
+}
+
+export const ACTOR_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function parseActorDocument(json: unknown, fetchedAt?: number): ActorInfo | null {
+    if (!json || typeof json !== "object") return null;
+    const doc = json as Record<string, unknown>;
+
+    const id = doc.id;
+    if (typeof id !== "string" || !id) return null;
+    const type = doc.type;
+    if (typeof type !== "string" || !type) return null;
+    const inbox = doc.inbox;
+    if (typeof inbox !== "string" || !inbox) return null;
+
+    let publicKey: ActorPublicKey | undefined;
+    if (doc.publicKey && typeof doc.publicKey === "object") {
+        const pk = doc.publicKey as Record<string, unknown>;
+        if (typeof pk.id === "string" && typeof pk.owner === "string" && typeof pk.publicKeyPem === "string") {
+            publicKey = { id: pk.id, owner: pk.owner, publicKeyPem: pk.publicKeyPem };
+        }
+    }
+
+    return {
+        id,
+        type,
+        inbox,
+        outbox: typeof doc.outbox === "string" ? doc.outbox : undefined,
+        preferredUsername: typeof doc.preferredUsername === "string" ? doc.preferredUsername : undefined,
+        name: typeof doc.name === "string" ? doc.name : undefined,
+        "ad4m:did": typeof doc["ad4m:did"] === "string" ? doc["ad4m:did"] : undefined,
+        publicKey,
+        fetchedAt: fetchedAt ?? Date.now(),
+    };
+}
+
+export function resolveAuthorFromActor(actor: ActorInfo | null, actorUrl: string): string {
+    if (actor?.["ad4m:did"]) return actor["ad4m:did"];
+    return `ap:${actorUrl}`;
+}
+
+export function isActorCacheExpired(
+    actor: ActorInfo,
+    now?: number,
+    ttlMs?: number,
+): boolean {
+    const currentTime = now ?? Date.now();
+    const ttl = ttlMs ?? ACTOR_CACHE_TTL_MS;
+    return (currentTime - actor.fetchedAt) > ttl;
+}
 
 // ---------------------------------------------------------------------------
 // Storage keys

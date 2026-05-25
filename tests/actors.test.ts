@@ -12,9 +12,9 @@ import {
     resolveAuthorFromActor,
     isActorCacheExpired,
     ACTOR_CACHE_TTL_MS,
-} from "../src/actors.pure.js";
+} from "../src/actors.js";
 
-import type { ActorInfo } from "../src/actors.pure.js";
+import type { ActorInfo } from "../src/actors.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

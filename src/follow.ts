@@ -3,21 +3,108 @@
  * Uses Transport for delivering Accept activities and StorageAdapter
  * for pending follows.
  *
- * Delegates pure logic to follow.pure.ts.
+ * Also includes: Pure follow protocol logic (was follow.pure.ts).
  * Spec §2.2.
  */
 
-import { getRuntime } from "./runtime-interface.js";
-import { getStorage } from "./storage-interface.js";
-import { getTransport } from "./transport.js";
+import { getRuntime, getStorage, getTransport } from "./adapters.js";
 
-import type { APActivity } from "./activitypub.js";
+import type { APActivity, APObject } from "./activitypub.js";
+import { apContext } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
-import type { FollowResult, FollowerInfo } from "./follow.pure.js";
-import { processFollow, processUndo, buildFollowRequest } from "./follow.pure.js";
 import { signedHeaders } from "./http-signatures.js";
 import { resolveActor, getActorInbox } from "./actors.js";
 import { registerFollower, removeFollower } from "./security.js";
+
+// ---------------------------------------------------------------------------
+// Pure follow types and functions (was follow.pure.ts)
+// ---------------------------------------------------------------------------
+
+export interface FollowerInfo {
+    actorUrl: string;
+    inboxUrl: string;
+    did?: string;
+    acceptedAt: number;
+}
+
+export interface FollowResult {
+    accepted: boolean;
+    acceptActivity?: APActivity;
+    followerInfo?: FollowerInfo;
+    pending: boolean;
+}
+
+export function processFollow(
+    activity: APActivity,
+    groupActorUrl: string,
+    followerInboxUrl: string,
+    settings: APLanguageSettings,
+    followerDid?: string,
+): FollowResult {
+    const followerActorUrl = activity.actor;
+
+    if (settings.requireApproval) {
+        return { accepted: false, pending: true };
+    }
+
+    const now = new Date().toISOString();
+    const acceptActivity: APActivity = {
+        "@context": apContext(),
+        type: "Accept",
+        id: `${groupActorUrl}/activities/accept-follow-${encodeURIComponent(followerActorUrl)}`,
+        actor: groupActorUrl,
+        published: now,
+        to: [followerActorUrl],
+        object: activity as unknown as APObject,
+    };
+
+    const followerInfo: FollowerInfo = {
+        actorUrl: followerActorUrl,
+        inboxUrl: followerInboxUrl,
+        did: followerDid,
+        acceptedAt: Date.now(),
+    };
+
+    return { accepted: true, acceptActivity, followerInfo, pending: false };
+}
+
+export function processUndo(
+    activity: APActivity,
+): { type: "unfollow"; actorUrl: string } | null {
+    const inner = activity.object;
+    if (typeof inner === "string") {
+        return { type: "unfollow", actorUrl: activity.actor };
+    }
+    const obj = inner as APObject;
+    if (obj.type === "Follow") {
+        return { type: "unfollow", actorUrl: activity.actor };
+    }
+    return null;
+}
+
+export function buildFollowRequest(
+    targetActorUrl: string,
+    groupActorUrl: string,
+): APActivity {
+    const now = new Date().toISOString();
+    return {
+        "@context": apContext(),
+        type: "Follow",
+        id: `${groupActorUrl}/activities/follow-${encodeURIComponent(targetActorUrl)}`,
+        actor: groupActorUrl,
+        published: now,
+        to: [targetActorUrl],
+        object: { type: "Person", id: targetActorUrl },
+    };
+}
+
+export function getStartPage(
+    collection: { first?: string; last?: string },
+    lastRevision: string | null,
+): string | null {
+    if (lastRevision) return lastRevision;
+    return collection.first ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Storage keys

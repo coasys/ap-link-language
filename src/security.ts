@@ -1,17 +1,68 @@
 /**
  * Security — membership verification, rate limiting, block list.
  * Runtime wrapper: uses injected StorageAdapter.
- * Delegates pure logic to security.pure.ts.
  *
+ * Also includes: Pure security logic (was security.pure.ts).
  * Spec §14.
  */
 
-import { getRuntime } from "./runtime-interface.js";
-import { getStorage } from "./storage-interface.js";
+import { getRuntime, getStorage } from "./adapters.js";
 
 import type { APLanguageSettings } from "./settings.js";
-import type { RateLimitState, MembershipResult } from "./security.pure.js";
-import { checkMembership, checkRateLimitPure } from "./security.pure.js";
+import type { MembershipMode, RateLimitSettings } from "./settings.js";
+
+// ---------------------------------------------------------------------------
+// Pure security types and functions (was security.pure.ts)
+// ---------------------------------------------------------------------------
+
+export interface RateLimitState {
+    count: number;
+    windowStart: number;
+}
+
+export interface MembershipResult {
+    allowed: boolean;
+    reason?: string;
+}
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+export function checkMembership(
+    membership: MembershipMode,
+    isFollower: boolean,
+    isMember: boolean,
+): MembershipResult {
+    switch (membership) {
+        case "open":
+            return { allowed: true };
+        case "followers-only":
+            if (isFollower || isMember) return { allowed: true };
+            return { allowed: false, reason: "Actor is not a follower of this group" };
+        case "members-only":
+            if (isMember) return { allowed: true };
+            return { allowed: false, reason: "Actor is not a member of this neighbourhood" };
+        case "admin-approved":
+            if (isMember) return { allowed: true };
+            return { allowed: false, reason: "Post requires admin approval" };
+        default:
+            return { allowed: false, reason: `Unknown membership mode: ${membership as string}` };
+    }
+}
+
+export function checkRateLimitPure(
+    state: RateLimitState | null,
+    settings: RateLimitSettings,
+    now?: number,
+): { allowed: boolean; newState: RateLimitState } {
+    const currentTime = now ?? Date.now();
+    if (!state || (currentTime - state.windowStart) > RATE_LIMIT_WINDOW_MS) {
+        return { allowed: true, newState: { count: 1, windowStart: currentTime } };
+    }
+    if (state.count >= settings.maxPerMinute) {
+        return { allowed: false, newState: state };
+    }
+    return { allowed: true, newState: { count: state.count + 1, windowStart: state.windowStart } };
+}
 
 // ---------------------------------------------------------------------------
 // Storage key helpers

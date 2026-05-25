@@ -12,7 +12,7 @@ import {
     processUndo,
     buildFollowRequest,
     getStartPage,
-} from "../src/follow.pure.js";
+} from "../src/follow.js";
 
 import type { APActivity, APObject } from "../src/activitypub.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";

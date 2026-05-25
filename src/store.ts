@@ -12,9 +12,8 @@
  *   peers/{did}                      → peer metadata JSON
  */
 
-import type { StorageAdapter } from "./storage-interface.js";
-import { getStorage } from "./storage-interface.js";
-import { getRuntime } from "./runtime-interface.js";
+import type { StorageAdapter } from "./adapters.js";
+import { getStorage, getRuntime } from "./adapters.js";
 
 import type { LinkExpression, PerspectiveDiff, Perspective } from "./types.js";
 

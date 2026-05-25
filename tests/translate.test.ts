@@ -28,7 +28,7 @@ import type { LinkExpression, PerspectiveDiff } from "../src/types.js";
 import type { APActivity, APObject, APLinkTag, APTag } from "../src/activitypub.js";
 import { DEFAULT_SETTINGS } from "../src/settings.js";
 import type { APLanguageSettings } from "../src/settings.js";
-import type { DetectedPattern } from "../src/sdna.js";
+import type { DetectedPattern } from "../src/translate.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

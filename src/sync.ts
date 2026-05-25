@@ -7,7 +7,7 @@
  * - Respects syncMode (publish-only skips sync)
  */
 
-import { getTransport } from "./transport.js";
+import { getTransport } from "./adapters.js";
 import type { PerspectiveDiff, LinkExpression } from "./types.js";
 import type { APActivity, APCollection, APCollectionPage } from "./activitypub.js";
 import { inboundActivityToLink } from "./translate.js";

@@ -24,9 +24,8 @@ import {
 import type { PerspectiveDiff, LinkExpression } from "./src/types.js";
 import { parseSettings } from "./src/settings.js";
 import type { APLanguageSettings } from "./src/settings.js";
-import { diffToActivities, linkContentKey } from "./src/translate.js";
-import { shouldFederate, linkOriginKey, linkContentHash } from "./src/dual-language.js";
-import type { LinkOrigin } from "./src/dual-language.js";
+import { diffToActivities, linkContentKey, shouldFederate, linkOriginKey, linkContentHash } from "./src/translate.js";
+import type { LinkOrigin } from "./src/translate.js";
 import * as store from "./src/store.js";
 import { deliverToFollowers } from "./src/delivery.js";
 import { syncFromOutbox } from "./src/sync.js";
@@ -34,15 +33,9 @@ import { buildGroupActor } from "./src/activitypub.js";
 import { processInboxSignal } from "./src/inbox.js";
 import { getFollowerInboxes } from "./src/security.js";
 
-// Adapter imports (interfaces for singletons, Deno impls for init)
-import { initTransport } from "./src/transport.js";
-import { DenoTransport } from "./src/transport-deno.js";
-import { initStorage, getStorage } from "./src/storage-interface.js";
-import { DenoStorageAdapter } from "./src/storage-deno.js";
-import { initSigning } from "./src/signing-interface.js";
-import { DenoSigningAdapter } from "./src/signing-deno.js";
-import { initRuntime } from "./src/runtime-interface.js";
-import { DenoRuntime } from "./src/runtime-deno.js";
+// Adapter imports
+import { initTransport, initStorage, getStorage, initSigning, initRuntime } from "./src/adapters.js";
+import { DenoTransport, DenoStorageAdapter, DenoSigningAdapter, DenoRuntime } from "./src/adapters-deno.js";
 
 // ---------------------------------------------------------------------------
 // Template Variables (per Spec §6)

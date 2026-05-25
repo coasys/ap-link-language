@@ -14,7 +14,7 @@
  * signature against the actor's publicKey fetched via the actor URL.
  */
 
-import { getSigning } from "./signing-interface.js";
+import { getSigning } from "./adapters.js";
 
 // ---------------------------------------------------------------------------
 // Digest

@@ -1,12 +1,11 @@
 /**
  * Link ↔ Activity translation layer.
  *
- * Implements the bidirectional mapping described in Spec §3.3:
+ * Implements the bidirectional mapping described in Spec §3.3.
  *
- * - `linkToActivity()` — LinkExpression → AP Create{Note} activity
- * - `activityToLink()` — AP Create{Note} activity → LinkExpression
- * - `removalToActivity()` — LinkExpression (removal) → AP Delete activity
- * - `diffToActivities()` — PerspectiveDiff → array of AP activities
+ * Also includes:
+ * - SDNA / Subject Class pattern detection (was sdna.ts)
+ * - Dual-language deduplication and origin tracking (was dual-language.ts)
  *
  * Pure functions — no ad4m:host imports. Safe for unit testing.
  */
@@ -15,8 +14,99 @@ import type { LinkExpression, PerspectiveDiff } from "./types.js";
 import type { APActivity, APObject, APLinkTag, APTag } from "./activitypub.js";
 import { apContext } from "./activitypub.js";
 import type { APLanguageSettings } from "./settings.js";
-import type { DetectedPattern } from "./sdna.js";
-import { detectPattern } from "./sdna.js";
+
+// ---------------------------------------------------------------------------
+// SDNA / Subject Class pattern detection (was sdna.ts)
+// ---------------------------------------------------------------------------
+
+export interface DetectedPattern {
+    type: "chat-message" | "reply" | "content" | "mention" | "reaction" | "unknown";
+    contentUri?: string;
+    parentUri?: string;
+    channelUri?: string;
+    mentionedAgent?: string;
+}
+
+const REPLY_PREDICATES = new Set([
+    "flux://has_reply",
+    "sioc://reply_of",
+]);
+
+const REACTION_PREDICATES = new Set([
+    "flux://has_reaction",
+    "emoji://reaction",
+]);
+
+const CONTENT_PREDICATE = "sioc://content_of";
+
+export function detectPattern(
+    link: LinkExpression,
+    chatPredicates: string[],
+): DetectedPattern {
+    const predicate = link.data.predicate || "";
+    const source = link.data.source || "";
+    const target = link.data.target || "";
+
+    if (predicate && chatPredicates.includes(predicate)) {
+        return { type: "chat-message", contentUri: target, channelUri: source };
+    }
+    if (REPLY_PREDICATES.has(predicate)) {
+        return { type: "reply", contentUri: target, parentUri: source };
+    }
+    if (predicate && predicate.toLowerCase().includes("mention")) {
+        return { type: "mention", mentionedAgent: target };
+    }
+    if (REACTION_PREDICATES.has(predicate)) {
+        return { type: "reaction", contentUri: target };
+    }
+    if (predicate === CONTENT_PREDICATE) {
+        return { type: "content", contentUri: target };
+    }
+    return { type: "unknown" };
+}
+
+// ---------------------------------------------------------------------------
+// Dual-language deduplication and origin tracking (was dual-language.ts)
+// ---------------------------------------------------------------------------
+
+export type LinkOrigin = "ap" | "native" | "dual";
+
+function canonicalLinkData(link: LinkExpression): string {
+    return JSON.stringify({
+        source: link.data.source || "",
+        predicate: link.data.predicate || "",
+        target: link.data.target || "",
+    });
+}
+
+export function isDuplicate(
+    link: LinkExpression,
+    existingHashes: Set<string>,
+    hashFn: (data: string) => string,
+): boolean {
+    const contentHash = hashFn(canonicalLinkData(link));
+    return existingHashes.has(contentHash);
+}
+
+export function linkContentHash(
+    link: LinkExpression,
+    hashFn: (data: string) => string,
+): string {
+    return hashFn(canonicalLinkData(link));
+}
+
+export function linkOriginKey(linkHash: string): string {
+    return `link-origin/${linkHash}`;
+}
+
+export function shouldFederate(
+    linkHash: string,
+    getOrigin: (key: string) => string | null,
+): boolean {
+    const origin = getOrigin(linkOriginKey(linkHash));
+    if (origin === null) return true;
+    return origin !== "ap";
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

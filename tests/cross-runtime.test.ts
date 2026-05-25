@@ -21,14 +21,14 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 // Adapter interfaces
-import type { StorageAdapter } from "../src/storage-interface.js";
-import { initStorage } from "../src/storage-interface.js";
-import type { Transport, TransportResponse } from "../src/transport.js";
-import { initTransport } from "../src/transport.js";
-import type { SigningAdapter } from "../src/signing-interface.js";
-import { initSigning } from "../src/signing-interface.js";
-import type { RuntimeAdapter } from "../src/runtime-interface.js";
-import { initRuntime } from "../src/runtime-interface.js";
+import type { StorageAdapter } from "../src/adapters.js";
+import { initStorage } from "../src/adapters.js";
+import type { Transport, TransportResponse } from "../src/adapters.js";
+import { initTransport } from "../src/adapters.js";
+import type { SigningAdapter } from "../src/adapters.js";
+import { initSigning } from "../src/adapters.js";
+import type { RuntimeAdapter } from "../src/adapters.js";
+import { initRuntime } from "../src/adapters.js";
 
 // Production modules under test
 import * as store from "../src/store.js";
@@ -38,7 +38,7 @@ import { fetchCollectionPage, fetchOutboxMeta, syncFromOutbox, processInboundAct
 import { resolveActor, resolveAuthor, getActorInbox, invalidateActorCache } from "../src/actors.js";
 import { isAllowedToPost, checkRateLimit, registerFollower, removeFollower, getFollowerInboxes, blockActor, unblockActor, isBlocked } from "../src/security.js";
 import { handleFollow, handleUndo, sendFollowRequest, listPendingFollows } from "../src/follow.js";
-import { routeInboundActivity } from "../src/inbox.pure.js";
+import { routeInboundActivity } from "../src/inbox.js";
 
 // Types
 import type { LinkExpression, PerspectiveDiff } from "../src/types.js";
